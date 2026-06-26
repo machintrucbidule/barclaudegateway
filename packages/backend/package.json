@@ -2,17 +2,23 @@
   "name": "@barclaudegateway/backend",
   "version": "0.0.1",
   "private": true,
-  "description": "BarclaudeGateway backend: Chronodrive auth engine, token lifecycle and API client (built from Phase 2).",
+  "description": "BarclaudeGateway backend: Chronodrive auth engine, token lifecycle, API client and the barcode-ingestion HTTP server (Phase 2–3).",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "start": "node dist/main.js",
+    "auth:smoke": "npm run build && node --env-file=.env scripts/auth-smoke.mjs",
+    "ingest:smoke": "npm run build && node --env-file=.env scripts/ingest-smoke.mjs"
   },
   "dependencies": {
-    "@barclaudegateway/shared": "0.0.1"
+    "@barclaudegateway/shared": "0.0.1",
+    "@fastify/static": "8.3.0",
+    "fastify": "5.8.5",
+    "undici": "7.28.0"
   },
   "devDependencies": {
     "@types/node": "26.0.1"

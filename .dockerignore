@@ -1,0 +1,52 @@
+# Build context excludes. Keep package-lock.json + every packages/*/package.json (needed for the
+# cached npm ci) and tsconfig.base.json (copied explicitly in the Dockerfile).
+
+# VCS / CI / hooks / editor noise
+.git
+.github
+.husky
+.vscode
+.idea
+
+# Installed deps + build outputs — all rebuilt inside the image
+node_modules
+**/node_modules
+dist
+**/dist
+build
+**/build
+*.tsbuildinfo
+**/*.tsbuildinfo
+coverage
+**/coverage
+.vite
+**/.vite
+
+# Secrets and local state — never in the image
+.env
+.env.*
+.env.example
+*.sqlite
+*.sqlite3
+*.db
+
+# Tests and dev-only scripts (not needed to build or run)
+**/*.test.ts
+**/*.test.tsx
+**/__tests__
+**/scripts
+
+# Docs / specs / markdown — not needed at build or run time
+docs
+specifications
+deploy
+*.md
+
+# OS / log noise
+.DS_Store
+Thumbs.db
+*.log
+
+# Docker meta itself
+Dockerfile
+.dockerignore

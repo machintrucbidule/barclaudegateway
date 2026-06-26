@@ -36,8 +36,11 @@ barclaudegateway/
   .husky/pre-commit              ← runs lint-staged on staged .ts/.tsx files
 ```
 
-> `docker/` and the image-publish workflow are intentionally **absent** until Phase 6
-> (Docker is never built or tested on Windows). The version starts at **0.0.1**.
+> Container packaging lives at the repo root: `Dockerfile`, `.dockerignore`, the GHCR release
+> workflow (`.github/workflows/release.yml`, tag-triggered) + a no-push PR build check
+> (`docker-build.yml`), the Portainer stack (`deploy/stack.yml`), and `docs/deployment.md`
+> (Phase 6, DECISION-015). Docker is still never built or tested on Windows — only CI builds it.
+> The version starts at **0.0.1**.
 
 ---
 
@@ -52,13 +55,28 @@ barclaudegateway/
 - Dev environment: **Windows 11**
 - Prod environment: **Docker / Portainer on Linux homelab** (Proxmox)
 
+**Container packaging (Phase 6, DECISION-015):**
+
+- **Image**: multi-stage `Dockerfile` on `node:24-slim`, runs as non-root `node` (uid 1000), one
+  process (`node packages/backend/dist/main.js`) serving the SPA + `/api` + `/v1`. Ref:
+  `ghcr.io/machintrucbidule/barclaudegateway`, **public** (no Portainer registry creds needed).
+- **Release**: `.github/workflows/release.yml` builds + pushes to GHCR on a `vX.Y.Z` tag
+  (`GITHUB_TOKEN`, `packages: write`), tagged `X.Y.Z` + `X.Y` + `latest`. `docker-build.yml` builds
+  the image without pushing on PRs that touch it. Checks-only `ci.yml` is unchanged.
+- **Persistence / secret model**: the **SQLite file on the `/data` volume + `BCG_MASTER_KEY`** are
+  the only state to back up. The key is injected at run time (never baked/logged); no `.env`, DB, or
+  secret is in the image.
+- **Healthcheck**: image HEALTHCHECK hits `GET /livez` (liveness, always 200), **not** `/health`
+  (a live Chronodrive readiness probe that 503s when the upstream is down). Restart: `unless-stopped`.
+- **Deploy artifact**: `deploy/stack.yml` (Portainer/compose, Watchtower-enabled) + `docs/deployment.md`.
+
 ### Application stack (DECIDED — Phase 0, see decisions.md)
 
-- **Backend**: Node.js / TypeScript (DECISION-002). Caveat: HTTP client must expose raw `Set-Cookie` headers (`__Host-SESSION`) — verify in Phase 2.
+- **Backend**: Node.js / TypeScript (DECISION-002). Caveat: HTTP client must expose raw `Set-Cookie` headers (`__Host-SESSION`) — verify in Phase 2. **HTTP server: Fastify** (DECISION-009, Phase 3) — exposes the ingestion endpoint; `inject()` keeps route tests socket-free.
 - **Frontend**: React + Vite (DECISION-004), sharing contract types with the backend.
 - **Storage**: SQLite, single file on a Docker volume (DECISION-003). Credentials encrypted at rest (AES-256). Scan-log retention policy keeps the log table bounded.
 - **Repo structure**: Monorepo, backend + frontend in one repo, one Docker build (DECISION-006).
-- **CI/CD**: GitHub Actions, two triggers (DECISION-005 release model). Routine push/PR → checks only (lint + tests). Version tag (e.g. `v0.0.2`, user-initiated) → build + publish the versioned Docker image to GHCR. App starts at **0.0.1**. Docker is never built/tested on Windows; all Docker/GHCR setup lives in **Phase 6**.
+- **CI/CD**: GitHub Actions, two triggers (DECISION-005 release model). Routine push/PR → checks only (lint + tests). Version tag (e.g. `v0.0.2`, user-initiated) → build + publish the versioned Docker image to GHCR. App starts at **0.0.1**. Docker is never built/tested on Windows; the Docker/GHCR pipeline shipped in **Phase 6** (DECISION-015).
 - **ESP32 → app protocol**: HTTP POST, synchronous response (DECISION-001).
 
 ### Dev tooling (DECIDED — Phase 1, see DECISION-007)
@@ -69,20 +87,21 @@ barclaudegateway/
 - **Lint/format**: ESLint flat config + Prettier (LF enforced via `.gitattributes` + `.editorconfig`).
 - **Tests**: **Vitest** (backend = node env, frontend = jsdom + Testing Library), scoped to `src/`.
 - **Pre-commit**: Husky + lint-staged (ESLint `--fix` + Prettier on staged `.ts`/`.tsx`).
-- **CI**: `.github/workflows/ci.yml`, checks-only on push/PR (install → lint → format check → typecheck → test → build). No image build (Phase 6).
-- **Git conventions** (`CONTRIBUTING.md`): branches `feature/`·`fix/`·`chore/`·`docs/`; **Conventional Commits**; release = bump version → push `vX.Y.Z` tag (triggers the image build in Phase 6).
+- **CI**: `.github/workflows/ci.yml`, checks-only on push/PR (install → lint → format check → typecheck → test → build). Image build/publish lives in `release.yml` (tag-triggered) + `docker-build.yml` (no-push PR check) — Phase 6, DECISION-015.
+- **Git conventions** (`CONTRIBUTING.md`): branches `feature/`·`fix/`·`chore/`·`docs/`; **Conventional Commits**; release = bump version → push `vX.Y.Z` tag (triggers the GHCR image build, `release.yml`).
 
 ### Chronodrive API
 
 Full spec: `specifications/api/chronodrive/contract.md`
 
-Auth flow (Reach5 PKCE):
+Auth flow (Reach5 PKCE) — **live-verified end-to-end by the middleware 2026-06-26** (contract.md §2, v1.4.1):
 
-- **Step 1** — `POST /identity/v1/password/login` → short-lived `tkn`
-- **Step 2** — `GET /oauth/authorize?prompt=none&tkn=...` → sets `__Host-SESSION` cookie (72h) + auth code
+- **Step 1** — `POST /identity/v1/password/login` → short-lived `tkn` **+ initial Reach5 session cookie** (forward it to Step 2)
+- **Step 2** — `GET /oauth/authorize?prompt=none&tkn=...` → sets `__Host-SESSION` cookie (72h) + auth code. **Requires `Origin`/`Referer` headers and the Step-1 cookies**, else 400 `No origin or referer retrieved`.
 - **Step 3** — `POST /oauth/token` (auth code exchange) → `access_token` (2h TTL)
-- **Silent refresh** (every ~2h): Steps 2+3 only, using `__Host-SESSION` cookie — no password needed
+- **Silent refresh** (every ~2h): Steps 2+3 only, using `__Host-SESSION` cookie — no password needed. **Confirmed working live.**
 - **Full re-login** (every ~72h or on `login_required`): Steps 1+2+3 with stored credentials
+- All `/oauth/*` + `/identity` calls must carry `Origin: https://www.chronodrive.com` + `Referer: https://www.chronodrive.com/`
 - Per-service static API keys exist — if one key rotates, only that service breaks
 - `x-api-version` response header signals Chronodrive backend deploys (monitor this)
 - All endpoints confirmed, no remaining spec gaps
@@ -92,7 +111,7 @@ Auth flow (Reach5 PKCE):
 - Hardware: ESP32 + GM65 or GM861 UART barcode scanner
 - ESPHome handles scanner, sends EAN code to middleware over local network
 - **Protocol: HTTP POST** (DECISION-001). Synchronous HTTP response carries the scan result so ESPHome drives LED + buzzer feedback (CLARIFY-04). Trade-off accepted: a scan during app downtime is lost (no queue).
-- **Physical feedback: LED + buzzer** (CLARIFY-04). Middleware returns a status detailed enough to distinguish multiple states (added / not-found / ineligible / out-of-stock / API error); ESPHome maps colors + buzzer. Exact wiring + response schema finalized in Phase 3.
+- **Physical feedback: LED + buzzer** (CLARIFY-04). Middleware returns a status detailed enough to distinguish multiple states; ESPHome maps colors + buzzer. **Finalized in Phase 3 (DECISION-010):** endpoint `POST /v1/scan { ean }` → rich `ScanResponse` with `status` ∈ `added` / `added_to_lists_only` (+reason) / `duplicate_ignored` / `not_found` / `partial` / `error` (+category) / `invalid_ean`. Firmware-facing mapping (states → LED colour + buzzer pattern, request/response examples) in `docs/esphome-contract.md`; shared types in `@barclaudegateway/shared`.
 
 ### Web UI
 
@@ -102,6 +121,23 @@ Auth flow (Reach5 PKCE):
 - **Not-found handling** (CLARIFY-01): log + visible alert in the UI (no manual-link screen in v1).
 - API error page must include: Firefox HAR capture tutorial + ready-to-paste Claude debug prompt (shipped in v1, CLARIFY-06).
 - **Proactive error notification** (CLARIFY-05): on critical API error, call a Home Assistant webhook (URL configured in the UI). Mosquitto/HA confirmed present in the homelab.
+
+**Implemented in Phase 4 (DECISION-011/012/013):**
+
+- **Stack** — React 19 + Vite, **Mantine** components + **react-router** (`/config`, `/dashboard`, `/logs`). Built bundle served by Fastify (`@fastify/static`, SPA history-fallback); in dev, Vite proxies `/api` and `/v1` to the backend.
+- **API surface** (`/api`, same Fastify app as `POST /v1/scan`): `GET/PUT /config`, `GET/PUT /config/destinations`, `PUT/DELETE /credentials`, `GET /scans`, `GET /scans/stream` (SSE), `GET /health`. Shapes typed in `@barclaudegateway/shared` (`ApiConfig`, `ConfigResponse`, `DestinationsResponse`, `ScansResponse`, `ScanRecord`, `ScanEvent`).
+- **Real-time** — **SSE** over an in-process `ScanEventBus` the pipeline publishes to at every journalled outcome (DECISION-012).
+- **Credentials write-only** — `PUT /api/credentials` stores them encrypted; no GET ever returns the password, only `credentials.set`. The `x-api-key`s are not secret and are returned/edited.
+- **Config page edits all static params** including a **new optional `site_id`** store-id override (empty = dynamic `lastVisitedSite.id` detection). It is the editor of the single Phase 3 `enabled_destinations` row — no second source of truth.
+- **Not-found alert** (CLARIFY-01) shipped on the dashboard.
+- **Dev workflow** — terminal 1 (backend on :8090): `npm run build -w @barclaudegateway/backend` then `npm start -w @barclaudegateway/backend` with `BCG_MASTER_KEY` set (see `packages/backend/.env.example`). terminal 2 (UI on :5173): `npm run dev -w @barclaudegateway/frontend` — Vite proxies `/api` and `/v1` to :8090. Production: `npm run build` (root) then run the backend, which serves the built SPA from `packages/frontend/dist`. The default port is **8090** (not 8080, which is commonly already in use on the host); override with `BCG_PORT`.
+
+**Implemented in Phase 5 (DECISION-014):**
+
+- **Critical-error detection** — an in-process `ErrorMonitor` (`packages/backend/src/health/errorMonitor.ts`) holds the current `ErrorState`, fed by **both** the periodic health self-test (every 6 h + startup) and live scan failures off the `ScanEventBus`. Critical = `auth`/`api_key`/`schema`/`server`/`network`/`timeout`; `not_found`/`rate_limit` are not. Auto-clears on recovery; emits only on transitions. Exposed at `GET /api/error-state` + `GET /api/error-state/stream` (SSE).
+- **Maintenance surface** — a global red **banner** (every page, links to `/maintenance`) + a dedicated **`/maintenance`** page with a plain-French explanation of the breakage, a **Firefox HAR capture tutorial**, and a **ready-to-paste Claude debug prompt** prefilled with the observed `category`/`endpoint`/`message`/`x-api-version`/timestamp (CLARIFY-06).
+- **Home Assistant alert** (CLARIFY-05) — `HaWebhookNotifier` POSTs a **secret-free** payload to the configured webhook **once per incident** (15-min cooldown) on a new critical error; no-op when unset. A **"Tester le webhook"** button on the config page (`POST /api/notify/test`) sends a sample.
+- **New config key `ha_webhook_url`** (empty by default) added to `AppConfig`/`ApiConfig`/`ConfigResponse` and the `config` table, edited in the config page's "Alerte Home Assistant" section — the single new field, mirroring the Phase 4 `site_id` addition.
 
 ---
 
@@ -118,6 +154,11 @@ All Phase 0 architecture decisions and functional clarifications are resolved. S
 | Monorepo vs packages           | RESOLVED | Monorepo (DECISION-006)              |
 | CI/CD pipeline for GHCR        | RESOLVED | GitHub Actions → GHCR (DECISION-005) |
 | Monorepo dev tooling           | RESOLVED | npm workspaces + ESLint/Prettier/Vitest/Husky (DECISION-007) |
+| Web UI stack + serving         | RESOLVED | Mantine + react-router, Fastify static (DECISION-011) |
+| Real-time log transport        | RESOLVED | SSE + in-process event bus (DECISION-012) |
+| Phase 4 API + write-only creds | RESOLVED | `/api` surface, `site_id` override (DECISION-013) |
+| Error detection + HA alert + HAR page | RESOLVED | `ErrorMonitor`, `/maintenance`, `ha_webhook_url` (DECISION-014) |
+| Docker image + GHCR release + Portainer | RESOLVED | multi-stage `node:24-slim`, public GHCR, tag-triggered, `/livez` healthcheck (DECISION-015) |
 
 ---
 
@@ -222,3 +263,8 @@ The generated prompt must always be fully self-contained: it lists the files to 
 - `isEligible: false` means the product exists but is unavailable at the configured drive location.
 - `stock` enum: `HIGH_STOCK`, `NO_STOCK`. `LOW_STOCK` inferred, not confirmed.
 - The `__Host-SESSION` cookie must be captured from the Step 2 response headers and stored in memory; it is not in the token JSON body.
+- Auth calls to `connect.chronodrive.com` require `Origin: https://www.chronodrive.com` + `Referer: https://www.chronodrive.com/` headers — without them Step 2 returns 400 `No origin or referer retrieved` (discovered live, contract.md §2.0).
+- Step 1 (`password/login`) sets the initial Reach5 session cookie that Step 2's `prompt=none` needs; a stateless client must forward Step 1's cookies into the Step 2 request.
+- **Scan behavior (CLARIFY-07/08, for Phase 3):** double-scan of the same EAN is debounced (~3 s window) then `+1`; out-of-stock (`NO_STOCK`) and ineligible (`isEligible: false`) products are added to the checked **lists only, never the cart**, with a distinct state returned for the ESPHome LED/buzzer.
+- **Phase 2 backend core is complete** (auth engine, token lifecycle, encrypted storage, typed Chronodrive client, read-only health self-test) — auth flow live-verified.
+- **Phase 3 ingestion is complete** (DECISION-009/010): Fastify server (`POST /v1/scan`, `GET /health`), EAN validation (length + GS1 check digit), debounce, scan→action pipeline (cart `+1` only when orderable; lists always; CLARIFY-01/08), bounded journaling, and the rich `ScanResponse` contract for ESPHome (`docs/esphome-contract.md`). Enabled destinations live in the SQLite `config` table under `enabled_destinations` (read side + minimal setter; full editor is Phase 4). Tested with mocked HTTP (`undici` `MockAgent`, `fastify.inject`).
