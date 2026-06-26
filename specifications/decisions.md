@@ -352,6 +352,26 @@
 
 ---
 
+## Resolved — Post-deployment fix (after first homelab run)
+
+### [DECISION-016] "Not configured yet" is an informational state, not a critical error
+
+- **Date**: 2026-06-27
+- **Question**: On a fresh install with **no Chronodrive credentials saved**, the startup health self-test tried to reach Chronodrive, failed, and the Phase 5 error monitor classified it as a critical `auth` breakage — showing the red "panne" maintenance banner for what is simply an unconfigured app. How should "not configured yet" be handled so it reads as information, not a failure?
+- **Decision** (surfaced to the user, who approved):
+  - **New benign `ErrorCategory` `not_configured`** — kept OUT of `CRITICAL_CATEGORIES`, so it never raises the maintenance surface or fires a Home Assistant alert.
+  - **The credentials loader throws `NotConfiguredError` (category `not_configured`) instead of `AuthError`** when none are saved, so every consumer (scan pipeline, health self-test, destinations) treats missing credentials as informational rather than an auth failure.
+  - **The health self-test short-circuits when nothing is configured** — no connection is attempted — and `HealthReport` carries `configured: false`. Both `/health` (Phase 3) and `/api/health` (dashboard) honour it; `/health` returns **200** (not 503) for the unconfigured case, since it is not a breakage.
+  - **The error monitor treats a `configured: false` report as benign** (clears/never raises).
+  - **The dashboard shows an informational "configure me" card** (with a link to the Config page) instead of the degraded/error state. The `not_configured` label is added to the shared error-category label map.
+  - **Scope note**: `not_configured` is an **app-internal** classification (a pre-flight state), NOT a Chronodrive API symptom — `contract.md` §7.1 is therefore intentionally left unchanged.
+- **Shipped in**: **v0.0.2** (the first patch after the v0.0.1 launch).
+- **Also bundled in v0.0.2** (dev tooling, not an app feature): Windows local-test scripts under `scripts/windows/` (`start-test.bat` / `stop-test.bat` / `reset-db.bat`) that run the single Node process on the dev box (Docker is still NEVER built/tested on Windows — DECISION-005/015), persist a test master key + SQLite under a git-ignored `.testdata/`, and `start-test.bat` opens the app in the browser after launch.
+- **Decided by**: User (Ivan).
+- **Rationale**: A brand-new install must not look broken. Distinguishing "not configured" from "configured but failing" keeps the maintenance surface meaningful (no false alarms), avoids a pointless connection attempt before setup, and still gives the operator a clear call to action.
+
+---
+
 ## Cross-cutting consequences for later phases
 
 - **Phase 3** must define a **rich HTTP response contract** (multiple distinct states: success / not-found / ineligible / out-of-stock / API error) so ESPHome can drive LED colors + buzzer (CLARIFY-04).

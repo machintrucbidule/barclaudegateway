@@ -56,6 +56,10 @@ Because the image is public, no GHCR credentials are configured in Portainer. Th
 `com.centurylinklabs.watchtower.enable=true` label lets Watchtower auto-pull when the running tag
 moves (relevant when `BCG_TAG=latest`).
 
+**First run:** until you save your Chronodrive credentials, the dashboard shows an informational
+"not configured yet" message (not an error) and the app makes no upstream calls — this is expected
+(DECISION-016, v0.0.2+). Enter your credentials on the Config page to bring it online.
+
 ## Deploy with plain Docker Compose
 
 ```sh

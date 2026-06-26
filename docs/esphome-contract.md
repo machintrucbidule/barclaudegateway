@@ -77,8 +77,10 @@ cart `skipped_unavailable` and no list written — read `destinations` if you ne
 ### `category` (only on `error` / `partial`)
 
 The failure class, mirroring the Chronodrive error taxonomy (contract.md §7.1):
-`auth` · `api_key` · `schema` · `not_found` · `rate_limit` · `server` · `network` · `timeout` · `unknown`.
-Phase 5 turns these into the maintenance page + a Home Assistant alert.
+`auth` · `api_key` · `schema` · `not_found` · `rate_limit` · `server` · `network` · `timeout` · `unknown`,
+plus the app-internal `not_configured` (no Chronodrive credentials saved yet — set them in the web UI).
+Phase 5 turns the critical ones into the maintenance page + a Home Assistant alert; `not_found`,
+`rate_limit` and `not_configured` are benign and never alert (DECISION-016).
 
 ### `destinations[]`
 

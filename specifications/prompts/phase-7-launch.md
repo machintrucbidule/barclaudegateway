@@ -20,10 +20,14 @@ ESP32 hardware steps the agent cannot perform, and the final acceptance sign-off
 
 ## Resolved decisions this phase depends on (do not re-open)
 - **The system under test is the published container** (DECISION-005/015): the image
-  `ghcr.io/machintrucbidule/barclaudegateway` is **public** on GHCR, tagged `0.0.1` + `0.0` + `latest`,
-  built only by CI on a `vX.Y.Z` tag. The first release **`v0.0.1`** is already published. Deploy it via
-  the **Portainer/compose stack** (`deploy/stack.yml`, Watchtower-enabled, `restart: unless-stopped`) and
-  the operator docs (`docs/deployment.md`).
+  `ghcr.io/machintrucbidule/barclaudegateway` is **public** on GHCR, tagged `X.Y.Z` + `X.Y` + `latest`,
+  built only by CI on a `vX.Y.Z` tag. **Current latest = `v0.0.2`** (`v0.0.1` was the launch, superseded by
+  the DECISION-016 fix). Deploy it via the **Portainer/compose stack** (`deploy/stack.yml`,
+  Watchtower-enabled, `restart: unless-stopped`) and the operator docs (`docs/deployment.md`).
+- **Unconfigured ≠ broken** (DECISION-016): with no credentials saved, the app makes **no upstream call**,
+  the health self-test is skipped (`HealthReport.configured: false`), the dashboard shows an informational
+  "configure me" card (not the red maintenance banner), and a scan returns the benign `not_configured`
+  category. Phase 7 must confirm this first-run behaviour and that configuring credentials brings it online.
 - **Single-process, single-origin runtime** (DECISION-011/015): one Fastify process serves the built SPA
   **and** the `/api` + `/v1` routes. No nginx, no second container. Liveness probe = `GET /livez`
   (always 200); `GET /health` is the live Chronodrive readiness self-test (503 when upstream down).
@@ -41,8 +45,12 @@ ESP32 hardware steps the agent cannot perform, and the final acceptance sign-off
   The error-detection + HAR-diagnosis surface (DECISION-014) is the recovery path if the contract drifts.
 
 ## What earlier phases already provide (reuse — do not rebuild)
-- A **published, CI-built `v0.0.1` image** and a green pipeline: checks-only `ci.yml`, the tag-triggered
-  `release.yml` (GHCR push), and the no-push PR `docker-build.yml`. 147 tests pass.
+- A **published, CI-built `v0.0.2` image** and a green pipeline: checks-only `ci.yml`, the tag-triggered
+  `release.yml` (GHCR push), and the no-push PR `docker-build.yml`. 152 tests pass.
+- **Windows local-test scripts** (`scripts/windows/`): `start-test.bat` (build if needed → run the single
+  Node process on `127.0.0.1:8090`, persist a test key + SQLite under git-ignored `.testdata/`, open the
+  browser), `stop-test.bat`, `reset-db.bat` (confirmation-gated wipe). Handy to reproduce behaviour on the
+  dev box WITHOUT Docker (still never built on Windows).
 - The full app: auth engine + token lifecycle + Chronodrive client (Phase 2), the `POST /v1/scan`
   ingestion endpoint with rich `ScanResponse` states + EAN validation + debounce (Phase 3), the
   config/dashboard/logs web UI + SSE stream + write-only credentials (Phase 4), and the ErrorMonitor +
@@ -58,7 +66,7 @@ ESP32 hardware steps the agent cannot perform, and the final acceptance sign-off
 - **Keep the `BCG_*` contract and the single-process/single-origin model intact.** Do not rename env vars,
   add a second container, or introduce a reverse proxy.
 - **Docker is still never built or tested on Windows.** The image under test is the CI-built GHCR image,
-  run on the Linux homelab (Portainer). Any new image is cut only by a CI tag (e.g. `v0.0.2`) if a fix lands.
+  run on the Linux homelab (Portainer). Any new image is cut only by a CI tag (e.g. `v0.0.3`) if a fix lands.
 - **Secrets never committed or logged.** Real credentials live only in a git-ignored `.env` / the Portainer
   secret. Minimal live calls; respect the CGU caution.
 - **Keep every gate green**: `npm run lint && npm run format:check && npm run typecheck && npm run test &&
@@ -68,14 +76,14 @@ ESP32 hardware steps the agent cannot perform, and the final acceptance sign-off
 Before anything else:
 - Read, in full:
   - specifications/PROJECT_CONTEXT.md
-  - specifications/decisions.md (esp. DECISION-008/011/013/014/015 and the live-call caution)
+  - specifications/decisions.md (esp. DECISION-008/011/013/014/015/016 and the live-call caution)
   - specifications/api/chronodrive/contract.md (esp. §7 drift process and §8 secret-free payloads)
   - docs/deployment.md, deploy/stack.yml, docs/esphome-contract.md
   - packages/backend/src/main.ts + config/env.ts (the `BCG_*` contract) and
     packages/backend/src/logging/redact.ts (redaction)
 - Inspect for any already-done Phase 7 work: a deployed container running in the homelab, a recorded
   end-to-end smoke result, a security/secret review note, resilience/recovery findings, a started
-  `DECISION-016`, an acceptance/operations doc.
+  `DECISION-017`, an acceptance/operations doc.
 - State clearly: "Resuming from step X" or "Starting from the beginning." Do not redo finished work.
 
 ## Goal
@@ -96,7 +104,7 @@ honest, complete operator documentation and a clear acceptance sign-off:
 1. **Resume check** (above). Output: a stated list of what is done vs remaining.
 
 2. **Plan the validation campaign and wait for approval.** In plain French, lay out and ask:
-   - **Deploy method for the test** — deploy the `latest`/`0.0.1` image via the Portainer stack on the
+   - **Deploy method for the test** — deploy the `latest`/`0.0.2` image via the Portainer stack on the
      homelab (the real target), vs a throwaway `docker run` on the Linux host. The user chooses; recommend
      the real Portainer stack so the test mirrors production.
    - **Live-call budget** — how many real Chronodrive scans to run (recommend the minimum that proves each
@@ -111,11 +119,14 @@ honest, complete operator documentation and a clear acceptance sign-off:
      container isn't killed), token expiry → silent refresh. The user chooses the set; recommend all.
    Output: an approved validation plan. No code/fixes before this approval.
 
-3. **Deploy & end-to-end smoke.** Deploy the published image per the approved method. Confirm: the SPA loads,
-   `GET /livez` is 200, `GET /health` reflects real Chronodrive readiness, config/login works (write-only
-   creds), and a **real ESP32 scan** flows through to Chronodrive with the correct `ScanResponse` state and
-   LED/buzzer feedback, visible live in the dashboard log. Capture each tested state. Output: a smoke report
-   (what was scanned, the observed state, the UI/LED outcome).
+3. **Deploy & end-to-end smoke.** Deploy the published image per the approved method. Confirm, in order:
+   (a) **first run, before any credentials** — the SPA loads, `GET /livez` is 200, `GET /api/health` returns
+   `configured: false`, the dashboard shows the informational "configure me" card (NOT the red banner), and
+   `GET /api/error-state` is `{active:false}` (DECISION-016); (b) **after saving credentials** —
+   `GET /health` reflects real Chronodrive readiness and config/login works (write-only creds); (c) a
+   **real ESP32 scan** flows through to Chronodrive with the correct `ScanResponse` state and LED/buzzer
+   feedback, visible live in the dashboard log. Capture each tested state. Output: a smoke report (the
+   first-run info state, what was scanned, the observed state, the UI/LED outcome).
 
 4. **Security & secret review.** Verify, with evidence: `BCG_MASTER_KEY` and the DB are never in the image
    (`.dockerignore` + image inspection), never logged (redaction holds across auth/scan/error paths), and

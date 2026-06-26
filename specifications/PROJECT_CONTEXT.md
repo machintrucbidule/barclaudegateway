@@ -40,7 +40,8 @@ barclaudegateway/
 > workflow (`.github/workflows/release.yml`, tag-triggered) + a no-push PR build check
 > (`docker-build.yml`), the Portainer stack (`deploy/stack.yml`), and `docs/deployment.md`
 > (Phase 6, DECISION-015). Docker is still never built or tested on Windows — only CI builds it.
-> The version starts at **0.0.1**.
+> The version started at **0.0.1**; **current published version is `0.0.2`** (DECISION-016).
+> Local dev/test on Windows uses `scripts/windows/` (start/stop/reset-db) — the Node toolchain only.
 
 ---
 
@@ -88,6 +89,7 @@ barclaudegateway/
 - **Tests**: **Vitest** (backend = node env, frontend = jsdom + Testing Library), scoped to `src/`.
 - **Pre-commit**: Husky + lint-staged (ESLint `--fix` + Prettier on staged `.ts`/`.tsx`).
 - **CI**: `.github/workflows/ci.yml`, checks-only on push/PR (install → lint → format check → typecheck → test → build). Image build/publish lives in `release.yml` (tag-triggered) + `docker-build.yml` (no-push PR check) — Phase 6, DECISION-015.
+- **Local Windows test env**: `scripts/windows/start-test.bat` (build if needed → run `node packages/backend/dist/main.js` on `127.0.0.1:8090`, persist a test master key + SQLite under git-ignored `.testdata/`, open the browser), `stop-test.bat`, `reset-db.bat` (confirmation-gated DB wipe). Runs the single Node process — Docker is never used on Windows (DECISION-016).
 - **Git conventions** (`CONTRIBUTING.md`): branches `feature/`·`fix/`·`chore/`·`docs/`; **Conventional Commits**; release = bump version → push `vX.Y.Z` tag (triggers the GHCR image build, `release.yml`).
 
 ### Chronodrive API
@@ -159,6 +161,7 @@ All Phase 0 architecture decisions and functional clarifications are resolved. S
 | Phase 4 API + write-only creds | RESOLVED | `/api` surface, `site_id` override (DECISION-013) |
 | Error detection + HA alert + HAR page | RESOLVED | `ErrorMonitor`, `/maintenance`, `ha_webhook_url` (DECISION-014) |
 | Docker image + GHCR release + Portainer | RESOLVED | multi-stage `node:24-slim`, public GHCR, tag-triggered, `/livez` healthcheck (DECISION-015) |
+| Unconfigured = info, not error        | RESOLVED | `not_configured` category, self-test skipped until configured, dashboard "configure me" card (DECISION-016, v0.0.2) |
 
 ---
 
