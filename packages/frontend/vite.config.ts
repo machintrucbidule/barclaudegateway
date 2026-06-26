@@ -5,6 +5,15 @@ import { defineConfig } from 'vite';
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  // Dev only: the React app runs on Vite (5173) and the API/scan routes on the backend (8090).
+  // Proxying keeps a single origin in the browser (no CORS) and works for SSE too. In production the
+  // backend serves the built bundle, so this proxy is never used there.
+  server: {
+    proxy: {
+      '/api': { target: 'http://localhost:8090', changeOrigin: true },
+      '/v1': { target: 'http://localhost:8090', changeOrigin: true },
+    },
+  },
   test: {
     environment: 'jsdom',
     globals: true,

@@ -1,0 +1,124 @@
+/**
+ * Home Assistant webhook notifier (Phase 5, CLARIFY-05 / DECISION-014).
+ *
+ * On a newly-detected critical incident the {@link ErrorMonitor} hands the error here; if a webhook URL
+ * is configured we POST a compact, secret-free alert so the user is told even when not watching the UI.
+ *
+ * Firing policy (the user's choice): once per incident, with a cooldown. The monitor already only
+ * surfaces a transition once per incident; the cooldown additionally suppresses re-fires if the same
+ * incident flaps (active→clear→active) inside the window. The payload carries category/endpoint/
+ * message/version/timestamp only — never tokens, cookies or passwords (contract.md §8).
+ */
+
+import { request } from 'undici';
+import type { ErrorStateError } from '@barclaudegateway/shared';
+
+const DEFAULT_COOLDOWN_MS = 15 * 60 * 1_000;
+const WEBHOOK_TIMEOUT_MS = 5_000;
+
+export interface HaWebhookDeps {
+  /** Read the configured URL lazily so config edits take effect without a restart. Empty = disabled. */
+  getUrl: () => string;
+  /** Injectable clock for deterministic tests. */
+  now?: () => number;
+  /** Minimum gap before the same incident may alert again. Defaults to 15 minutes. */
+  cooldownMs?: number;
+}
+
+/** The secret-free body POSTed to Home Assistant. */
+export interface HaWebhookPayload {
+  source: 'BarclaudeGateway';
+  severity: 'critical';
+  category: string;
+  endpoint?: string;
+  message: string;
+  apiVersion?: string;
+  at: number;
+  /** True for the config-page "send test" button so HA automations can ignore drills. */
+  test: boolean;
+}
+
+export interface HaWebhookResult {
+  ok: boolean;
+  status?: number;
+  error?: string;
+}
+
+export class HaWebhookNotifier {
+  private readonly getUrl: () => string;
+  private readonly now: () => number;
+  private readonly cooldownMs: number;
+  private lastKey: string | undefined;
+  private lastFiredAt = Number.NEGATIVE_INFINITY;
+
+  constructor(deps: HaWebhookDeps) {
+    this.getUrl = deps.getUrl;
+    this.now = deps.now ?? Date.now;
+    this.cooldownMs = deps.cooldownMs ?? DEFAULT_COOLDOWN_MS;
+  }
+
+  /** Alert on a critical incident. No-op when no URL is set or the same incident is within cooldown. */
+  async notify(error: ErrorStateError): Promise<void> {
+    const url = this.getUrl().trim();
+    if (url === '') return;
+
+    const key = `${error.category}|${error.endpoint ?? ''}`;
+    const at = this.now();
+    if (this.lastKey === key && at - this.lastFiredAt < this.cooldownMs) return;
+    this.lastKey = key;
+    this.lastFiredAt = at;
+
+    await this.post(url, this.payload(error, false));
+  }
+
+  /** Send a clearly-marked sample alert for the config-page test button. Bypasses the cooldown. */
+  async sendTest(): Promise<HaWebhookResult> {
+    const url = this.getUrl().trim();
+    if (url === '') return { ok: false, error: 'No Home Assistant webhook URL configured' };
+    const sample: ErrorStateError = {
+      category: 'server',
+      endpoint: 'GET /customers/me',
+      message: 'Test alert from BarclaudeGateway',
+      at: this.now(),
+    };
+    return this.post(url, this.payload(sample, true));
+  }
+
+  private payload(error: ErrorStateError, test: boolean): HaWebhookPayload {
+    return {
+      source: 'BarclaudeGateway',
+      severity: 'critical',
+      category: error.category,
+      endpoint: error.endpoint,
+      message: error.message,
+      apiVersion: error.apiVersion,
+      at: error.at,
+      test,
+    };
+  }
+
+  private async post(url: string, payload: HaWebhookPayload): Promise<HaWebhookResult> {
+    try {
+      const res = await request(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
+      });
+      await res.body.dump(); // drain so the socket can be reused
+      const ok = res.statusCode >= 200 && res.statusCode < 300;
+      return ok
+        ? { ok: true, status: res.statusCode }
+        : {
+            ok: false,
+            status: res.statusCode,
+            error: `Home Assistant returned ${String(res.statusCode)}`,
+          };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Webhook request failed',
+      };
+    }
+  }
+}

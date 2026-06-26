@@ -1,10 +1,13 @@
 /**
  * Shared contract types between the backend and the frontend.
  *
- * This package is intentionally minimal for the Phase 1 skeleton: it only proves that both sides
- * can import the same types. The real Chronodrive contract types land in Phase 2, derived from
- * `specifications/api/chronodrive/contract.md`.
+ * The Chronodrive private-API contract types live in `./chronodrive/contract` and are re-exported
+ * here so both sides import them from `@barclaudegateway/shared` (DECISION-002, DECISION-006).
  */
+
+export * from './chronodrive/contract.js';
+export * from './ingest/contract.js';
+export * from './api/contract.js';
 
 /**
  * Value of the Chronodrive `x-api-version` response header. Changes to this signal a backend

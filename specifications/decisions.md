@@ -2,7 +2,7 @@
 
 > Decisions are added here as they are resolved. Each entry records: the question, the options considered, the choice made, and who decided.
 > All Phase 0 functional clarifications (CLARIFY-_) and architecture decisions (DECISION-_) are now resolved.
-> Last updated: 2026-06-26
+> Last updated: 2026-06-27
 
 ---
 
@@ -197,10 +197,167 @@
 
 ---
 
+## Resolved — Implementation decisions (Phase 2)
+
+### [DECISION-008] Core backend implementation choices (auth engine, lifecycle, storage)
+
+- **Date**: 2026-06-26
+- **Question**: Which concrete libraries and policies implement the Phase 2 backend (HTTP client, secret storage, retry, retention, static config) on Node 24 / TypeScript?
+- **Options considered & decisions** (each surfaced to the user with plain-language impacts):
+  - **HTTP client — `undici` (explicit dependency), pinned `7.28.0`.** Chosen over native `fetch` for an explicit, mature, richly-typed dependency with first-class test mocking (`MockAgent`). **Go/no-go gate passed**: a throwaway proof showed undici exposes raw `Set-Cookie` (`__Host-SESSION` + legacy) and replays them — the blocking caveat from DECISION-002 / contract.md §2.4 is cleared.
+  - **Secret key management — env var `BCG_MASTER_KEY`** (32 bytes, hex/base64), never written to disk. Absent → hard, clear failure (no silent fallback). Credentials are **AES-256-GCM** (authenticated; wrong key fails closed) via Node built-in `node:crypto`.
+  - **Retry/backoff — limited retries with exponential backoff + jitter** (3 attempts, base 300ms, honour `Retry-After`), only on network/timeout/5xx/429. Never retry 401 (→ token refresh) or business 4xx.
+  - **Scan-log retention — 10 000 rows OR 10 years, most restrictive wins** (user-chosen). Prune on startup + daily.
+  - **SQLite driver — `node:sqlite` (Node 24 built-in).** Zero extra dependency; accepts the runtime ExperimentalWarning. Only native runtime dep added this phase is `undici`.
+  - **Static API config (client_id, x-api-keys, base URLs) lives in a SQLite `config` table**, seeded from code on first run (`INSERT OR IGNORE`), editable in the Phase 4 UI without redeploy when a key rotates. Env carries only the master key + DB path.
+  - **Error model** — a `ChronodriveError` taxonomy with a shared `category` (`auth`/`api_key`/`schema`/`not_found`/`rate_limit`/`server`/`network`/`timeout`) mapped to contract.md §7.1, so Phase 5 can route failures without re-parsing.
+  - **Optional manual live smoke-test (`npm run auth:smoke`)** — git-ignored `.env`, not in CI; one real login + refresh.
+- **Decided by**: User (Ivan) — package manager, key management, retry, retention and SQLite driver chosen explicitly; the rest presented and approved.
+- **Live-verification outcome (contract.md → v1.4.1)**: running the smoke-test against production surfaced **two real corrections to the auth contract**, now fixed in code and spec: (1) `connect.chronodrive.com` requires `Origin`/`Referer` headers (else 400 `No origin or referer retrieved`); (2) Step 1 sets the initial session cookie that must be forwarded to Step 2. With both, full login **and** silent refresh are confirmed working live (the refresh was previously only inferred).
+- **Rationale**: Minimal, mature, well-typed toolchain; secrets never on disk; resilience to transient API hiccups without masking real failures; the contract stays a living record of observed reality (§7 process applied immediately on the live findings).
+
+---
+
+## Resolved — Scan-behavior clarifications (Phase 2 design gate → carried into Phase 3)
+
+### [CLARIFY-07] Double-scan of the same product
+
+- **Date**: 2026-06-26
+- **Question**: "Add to cart" is a signed `+1`, so scanning the same EAN twice sets quantity 2. Cheap UART scanners (GM65/GM861) sometimes emit two reads for one pass. What happens on a repeat of the same code?
+- **Options considered**:
+  - A: Short debounce then +1 | Impact: absorbs hardware double-reads, intentional repeats still work after the window.
+  - B: Always +1 per scan | Impact: simplest, but a stuttering scanner adds 2 unintentionally.
+  - C: Idempotent (stays 1) | Impact: no duplicates, but can't raise quantity from the scanner.
+- **Decision**: **A — short debounce then +1.** Ignore a repeat of the same EAN within a short window (~3 s default) to absorb double-reads; a later scan adds `+1`.
+- **Decided by**: User (Ivan).
+- **Impact on Phase 3**: the scan pipeline keeps a small in-memory last-scan map (EAN → timestamp); the debounce window is a tunable constant (default ~3 s, expose/confirm in the Phase 4 config UI).
+
+### [CLARIFY-08] Unavailable products — out-of-stock or ineligible
+
+- **Date**: 2026-06-26
+- **Question**: What to do when a scanned product exists but is **out-of-stock** (`stock: NO_STOCK`) at the drive, or **ineligible** (`isEligible: false` — not sold at this drive)?
+- **Options considered**:
+  - A: Add everywhere + signal | Impact: lists complete, but an unbuyable item lands in the cart.
+  - B: Lists yes, cart no + signal | Impact: cart stays orderable, the wish is kept on the list; slightly finer per-destination logic.
+  - C: Add nothing + signal | Impact: nothing unwanted, but the wish is lost / must be re-scanned.
+- **Decision**: **B — lists yes, cart no, and signal the state** (same rule for both out-of-stock and ineligible). Add to the checked shopping lists but skip the cart; return a distinct state so ESPHome drives a specific LED/buzzer.
+- **Decided by**: User (Ivan).
+- **Impact on Phase 3**: the scan→action pipeline branches on `stock` / `isEligible` from §5.1 — cart writes are skipped for these, list writes proceed — and the rich response distinguishes `out_of_stock` / `ineligible` from `added` / `not_found` / `error`.
+
+---
+
+## Resolved — Implementation decisions (Phase 3)
+
+### [DECISION-009] HTTP server framework for the ingestion endpoint
+
+- **Date**: 2026-06-26
+- **Question**: Phase 2 shipped no HTTP server. What stands up the `POST /v1/scan` endpoint the ESP32 calls?
+- **Options considered** (surfaced with plain-language impacts):
+  - A — Node built-in `http` | Impact: zero dependency, consistent with the project's minimal-runtime-deps discipline (only `undici`); but more manual routing/body-parsing as routes grow in Phase 4/5.
+  - B — **Fastify** | Impact: one dependency (+ its tree); ergonomic routing, automatic JSON body parsing, `inject()` for socket-free tests; pays off when Phase 4 adds config CRUD, dashboard and the real-time log stream.
+- **Decision**: **B — Fastify** (pinned `5.8.5`, exact via `.npmrc save-exact`).
+- **Decided by**: User (Ivan).
+- **Rationale**: The route surface grows in Phase 4+, where a framework earns its keep; `fastify.inject()` keeps server tests fast and deterministic (no real socket). Accepted the one-dependency cost.
+
+### [DECISION-010] Ingestion contract and scan→action pipeline
+
+- **Date**: 2026-06-26
+- **Question**: How is a scanned EAN validated, routed, journaled and answered (rich enough for LED + buzzer, CLARIFY-04)?
+- **Decisions** (each surfaced to the user):
+  - **EAN validation** — digits-only, length ∈ {8, 12, 13}, **GS1 mod-10 check digit verified**; UPC-A normalised to EAN-13. A malformed barcode is rejected with **HTTP 400 `invalid_ean`** without any Chronodrive call (user-chosen over length-only validation).
+  - **Endpoint** — `POST /v1/scan` `{ ean }`, synchronous `ScanResponse`. `GET /health` reuses the Phase 2 read-only self-test. No application auth (local-only, PROJECT_CONTEXT §Deployment).
+  - **Rich response states** — `added` · `added_to_lists_only` (+`reason` `out_of_stock`|`ineligible`) · `duplicate_ignored` · `not_found` · `partial` · `error` (+`category`) · `invalid_ean`. The firmware switches on `status`; the HTTP code is secondary (200 business outcomes, 400 invalid, 502 upstream failure). Shared types in `@barclaudegateway/shared`; firmware mapping in `docs/esphome-contract.md`.
+  - **Partial-failure semantics** — when a scan targets several destinations and only some succeed, return a **distinct `partial` state** (user-chosen over a single global red error), so the firmware can show it and the user need not blindly re-scan.
+  - **Debounce** — identical EAN repeated inside a **~3 s window** (tunable constant `DEFAULT_DEBOUNCE_MS`) → `duplicate_ignored`, **not journaled** (it is a hardware artefact, CLARIFY-07).
+  - **Routing rules** (CLARIFY-08) — cart receives a signed `+1` **only when orderable** (`stock !== NO_STOCK && isEligible !== false`); lists always receive the product when it exists. Cart-id cached (contract.md §5.3), refetched once on a stale 404.
+  - **Enabled-destinations config** — stored as JSON in the SQLite `config` table under `enabled_destinations` (`{ cart: boolean, lists: [{ id, name }] }`), default the safe empty set `{ cart: false, lists: [] }`. Read by `DestinationsStore`; the full checkbox editor is Phase 4.
+  - **Optional manual smoke** — `npm run ingest:smoke` (git-ignored `.env`, not in CI): **read-only by default** (resolves a known EAN to confirm auth + search + §3 Origin/Referer); the real write path is opt-in behind `BCG_SMOKE_WRITE=true`.
+- **Decided by**: User (Ivan) — server framework, EAN strictness, partial-failure state and the smoke test chosen explicitly; the rest presented and approved.
+- **Rationale**: Cheap, early rejection of bad scans; a response contract that keeps the visual-granularity option open at the ESPHome layer without app changes; a safe default that never touches the real cart until the user configures destinations.
+
+---
+
+## Resolved — Implementation decisions (Phase 4)
+
+### [DECISION-011] Local web-UI stack and how it is served
+
+- **Date**: 2026-06-26
+- **Question**: Phase 1 chose React + Vite (DECISION-004). What component/styling library, navigation, and serving model implement the three pages (Config / Dashboard / Logs)?
+- **Options considered** (surfaced with plain-language impacts):
+  - **Styling** — plain hand-written CSS (zero dependency, light) vs a **component library** (more weight, but batteries-included widgets). The user chose a component library; **Mantine** (`@mantine/core` + `@mantine/hooks`, React 19-ready) picked for its complete set (checkboxes, inputs, tables, badges, alerts, app-shell) and good docs.
+  - **Navigation** — home-rolled tab state (no dependency, no per-page URL) vs **react-router** (real `/config`/`/dashboard`/`/logs` URLs, working back button + refresh). The user chose **react-router** (`react-router-dom`).
+  - **Serving** — Fastify serves the built `packages/frontend/dist` in production (`@fastify/static`, single origin, no CORS, SPA history-fallback via `setNotFoundHandler`); in dev, Vite dev server proxies `/api` and `/v1` to the backend. Static serving is skipped when the bundle is absent (dev/CI without a build).
+- **Decided by**: User (Ivan) — styling approach and navigation chosen explicitly; the serving model confirmed.
+- **Rationale**: A small utilitarian UI gains more from ready-made accessible widgets than from bespoke CSS; real URLs are expected of a web app; one origin keeps deployment (Phase 6) and the browser simple.
+
+### [DECISION-012] Real-time transport for the live log stream
+
+- **Date**: 2026-06-26
+- **Question**: How does the browser receive scans live on the Logs page?
+- **Options considered**: SSE (one-way server→browser, native to HTTP/Fastify, auto-reconnect, no extra plugin) · WebSocket (bidirectional, heavier, needs a plugin — unused capability here) · short polling (trivial but laggy/wasteful).
+- **Decision**: **Server-Sent Events.** `GET /api/scans/stream` writes `text/event-stream`; a small **in-process event bus** (`ScanEventBus`, a typed `EventEmitter` wrapper) is published to by the ingest pipeline at every journalled outcome and subscribed to by the SSE route. The pipeline takes the bus as an optional dependency, so the publish is additive and Phase 3 tests are untouched. Debounced repeats are not journalled and therefore not streamed.
+- **Decided by**: User (Ivan).
+- **Rationale**: The page only needs to display scans as they happen — a one-way push with built-in reconnection is the simplest fit; the bus decouples the pipeline from the transport and lets the live event carry the full `ScanResponse` (richer than the persisted journal row).
+
+### [DECISION-013] Phase 4 API surface, write-only credentials, and editable static params
+
+- **Date**: 2026-06-26
+- **Question**: What backend routes feed the UI, and what exactly is editable — given credentials must stay write-only (contract.md §8)?
+- **Decisions** (each surfaced to the user):
+  - **API surface** under `/api`: `GET/PUT /config` (static params + a credentials `set` flag), `GET/PUT /config/destinations` (the `enabled_destinations` editor, plus the live `getShoppingLists()` choices), `PUT/DELETE /credentials` (write-only), `GET /scans` (recent journal + count), `GET /scans/stream` (SSE), `GET /health` (self-test). All shapes typed in `@barclaudegateway/shared` (`ApiConfig`, `ConfigResponse`, `DestinationsResponse`, `ScansResponse`, `ScanRecord`, `ScanEvent`).
+  - **Credentials are write-only** — the backend never serialises the password; `GET /api/config` exposes only `credentials.set`. Enforced and tested (a route test asserts the password never appears in any GET response). The per-service `x-api-key`s are **not** secret (public bundle, §8) and are returned/edited normally.
+  - **All static API params editable now** (user-chosen over deferring): `client_id`, `redirect_uri`, `scope`, `identity_base_url`, `api_base_url`, the four `x-api-key`s, `site_mode`, **plus a new optional `site_id` override**. `site_id` is empty by default → the client keeps deriving the store id dynamically (`lastVisitedSite.id`); a non-empty value pins the store and skips the lookup (`ChronodriveClient` already accepts an injected `siteId`).
+  - **Single source of truth** — the config page edits the same Phase 3 `enabled_destinations` row; no second store invented.
+- **Decided by**: User (Ivan) — editable static params (incl. the store-id override) chosen explicitly; the rest presented and approved.
+- **Rationale**: A thin API over the existing stores; write-only credentials keep the secret one-directional; making every static param (and the store id) editable lets the operator recover from a Chronodrive key rotation or a wrong auto-detected store without a redeploy.
+
+---
+
+## Resolved — Implementation decisions (Phase 5)
+
+### [DECISION-014] Critical-error detection, maintenance surface, and Home Assistant alerting
+
+- **Date**: 2026-06-26
+- **Question**: What counts as a "critical" API breakage, how is it detected, how is it surfaced in the UI, and how does the proactive Home Assistant alert fire (CLARIFY-01/05/06)? Reuses the existing `ErrorCategory` taxonomy — Phase 5 classifies, it does not re-taxonomise.
+- **Decisions** (each surfaced to the user, who chose):
+  - **Critical categories** = `auth`, `api_key`, `schema`, `server`, `network`, `timeout`. **Excluded**: `not_found` (a normal business outcome, already shown on the dashboard) and `rate_limit` (transient throttling — nothing is broken). These six are the trigger for both the maintenance surface and the HA alert.
+  - **Detection = both sources**: a periodic read-only health self-test (every **6 h**, plus once at startup — `runHealthSelfTest` fed to the monitor via `ingestHealthReport`) **and** live scan failures off the existing `ScanEventBus` (`ingestScan`). The self-test catches a breakage even with no scans (a few cheap recurring calls); the scan path catches real failures instantly with zero extra calls.
+  - **In-process `ErrorMonitor`** (`packages/backend/src/health/errorMonitor.ts`) holds the single current `ErrorState` (`{ active, error? }` with `category`/`endpoint`/`message`/`apiVersion`/`at`). It emits **only on a genuine transition** (inactive↔active or a different incident), so SSE clients and the notifier see one event per incident, not one per scan. A reachable, non-critical outcome (any success, `not_found`, `rate_limit`, or an ok self-test) **auto-clears** the surface — no manual acknowledge. Exposed at `GET /api/error-state` (REST, initial load) and `GET /api/error-state/stream` (SSE, live).
+  - **Surface = a global red banner + a dedicated `/maintenance` page**. The banner sits in the app shell (every page) and links to `/maintenance`, which explains the breakage in plain French (keyed by `ErrorCategory`), then carries a **Firefox HAR capture tutorial** and a **ready-to-paste Claude debug prompt** prefilled with the observed `category`/`endpoint`/`message`/`x-api-version`/timestamp and instructed to diff against `contract.md` §7.2. The tutorial + prompt are always available, even with no active error. The existing dashboard `not_found` alert stays as a separate non-critical case.
+  - **HA webhook = once per incident, with a 15-min cooldown** (`HaWebhookNotifier`). On a new critical incident it POSTs a **secret-free** payload (`source`/`severity`/`category`/`endpoint`/`message`/`apiVersion`/`at`/`test` — never tokens/cookies/passwords, contract.md §8) to the configured URL; the cooldown suppresses re-fires if the same incident flaps. No-op when the URL is empty. A **"Tester le webhook"** button on the config page (`POST /api/notify/test`) sends a clearly-marked sample.
+  - **New config key `ha_webhook_url`** added to `AppConfig`/`CONFIG_KEYS`/`DEFAULT_APP_CONFIG`/`appConfigToEntries`/`appConfigFromMap` and `ApiConfig`/`ConfigResponse` (empty by default), mirroring the Phase 4 `site_id` addition — the single new field, stored in the same `config` table (CLARIFY-05, deferred from Phase 4). `PUT /api/config` accepts empty or a valid http(s) URL.
+- **Decided by**: User (Ivan) — the four product choices (critical set, detection sources, surface shape, firing policy) chosen explicitly from presented trade-offs; the HAR tutorial + prompt wording approved in the plan.
+- **Rationale**: A Chronodrive-side change must be visible and actionable without reading logs. Classifying through the existing taxonomy keeps one source of truth; "both" detection covers the idle case and the active case; banner-plus-page makes a breakage impossible to miss yet keeps the diagnostics off the busy dashboard; once-per-incident-with-cooldown alerts the user proactively without notification spam; the embedded HAR workflow turns each breakage into a self-serve diagnosis against the documented contract.
+
+---
+
+## Resolved — Docker packaging, GHCR CI/CD & Portainer deployment (Phase 6)
+
+### [DECISION-015] Container image, GHCR release pipeline, and the Portainer deployment artifact
+
+- **Date**: 2026-06-27
+- **Question**: How is the single-process app (Fastify serving the SPA + `/api` + `/v1`) packaged into a Docker image, built and published by CI, and deployed in the homelab — without ever building Docker on Windows (DECISION-005/007)?
+- **Options considered** (each surfaced to the user with plain-language impacts; the user chose):
+  - **Image shape & base** — multi-stage vs single-stage; `node:24-slim` vs `node:24-alpine` vs distroless. **Chosen: multi-stage on `node:24-slim`.** A builder stage runs `npm ci` + `npm run build`; a slim runtime stage carries only production `node_modules` + the built backend `dist` + the built SPA. Slim (Debian/glibc) is the safe base for the Node 24 built-in `node:sqlite` (musl/Alpine can bite experimental bits; distroless is smallest but undebuggable). Smallest clean image without surprises.
+  - **GHCR authentication** — built-in `GITHUB_TOKEN` vs a personal PAT. **Chosen: `GITHUB_TOKEN`** (`permissions: packages: write`). No secret to manage; the package is tied to the repo. A PAT would only be needed for cross-repo/org pushes.
+  - **Image visibility** — public vs private GHCR package. **Chosen: public.** Portainer/Watchtower pull with **no registry credentials**. The image carries no secrets regardless (the repo is already open-source).
+  - **Tag scheme** from a `vX.Y.Z` git tag — **Chosen: exact `X.Y.Z` + moving `X.Y` + `latest`** (`latest` only for non-prerelease tags, gated on `!contains(github.ref_name, '-')`). App version source of truth is `package.json` (starts at `0.0.1`); a release = bump version → push the tag.
+  - **Healthcheck** — **Chosen: add a tiny `GET /livez` liveness route** (always 200, server-up only) and point the Docker HEALTHCHECK at it. `GET /health` is deliberately **not** used: it runs a live Chronodrive self-test and returns 503 when the upstream is merely down/unconfigured ([packages/backend/src/ingest/server.ts](../packages/backend/src/ingest/server.ts)), which would wrongly mark a live container unhealthy (and could trigger restarts). The `/livez` route + its test are the only code change this phase.
+  - **Restart policy** — **Chosen: `unless-stopped`** (recovers after host reboot/crash, not after a deliberate stop).
+  - **Deployment artifact** — **Chosen: a Portainer/compose stack file _plus_ explanatory docs.** [`deploy/stack.yml`](../deploy/stack.yml) is modeled on the user's existing Macronome stack: `image: ghcr.io/machintrucbidule/barclaudegateway:${BCG_TAG:-latest}`, `restart: unless-stopped`, the Watchtower auto-update label, a parametrized published port, the `BCG_MASTER_KEY: ${BCG_MASTER_KEY:?…}` fail-fast env, and a named `appdata` volume at `/data` (no Postgres — SQLite). [`docs/deployment.md`](../docs/deployment.md) explains every line.
+- **Release mechanism**: `.github/workflows/release.yml` triggers ONLY on `v*` tags — checkout → Buildx → GHCR login (`GITHUB_TOKEN`) → `docker/metadata-action` derives the tag set → `docker/build-push-action` builds on the Linux runner and pushes, with GitHub Actions layer caching. The existing checks-only `ci.yml` is untouched. A separate `.github/workflows/docker-build.yml` builds the image **without pushing** on PRs that touch the Dockerfile (proves it on Linux, fork-safe, no secrets).
+- **Persistence & secret model**: the **SQLite file on the `/data` volume + `BCG_MASTER_KEY`** are the only persistent state. The key is injected at run time (env/secret), never baked into the image or logged; no `.env`, no DB file, no secrets in the image. The image runs as the non-root `node` user (uid/gid 1000); a bind-mounted `/data` must be `chown 1000:1000` by the operator (a named volume inherits ownership).
+- **Decided by**: User (Ivan) — image shape/base, GHCR auth, visibility, tag scheme, healthcheck approach, restart policy, and deployment-artifact form all chosen explicitly from presented trade-offs.
+- **Rationale**: A reproducible, minimal image built only by CI (never on Windows) keeps the Windows box on the Node toolchain alone; a public image with `GITHUB_TOKEN` auth is the lowest-friction path for a solo homelab; the `/livez` split keeps container liveness honest while preserving `/health` as the Chronodrive readiness probe; and a Macronome-shaped stack + docs lets the operator deploy without guessing, with a single clear thing to back up.
+
+---
+
 ## Cross-cutting consequences for later phases
 
 - **Phase 3** must define a **rich HTTP response contract** (multiple distinct states: success / not-found / ineligible / out-of-stock / API error) so ESPHome can drive LED colors + buzzer (CLARIFY-04).
-- **Phase 6** must resolve **GHCR authentication** (PAT scopes, `docker login ghcr.io`) (DECISION-005). _(Moved from Phase 1: Docker is never built/tested on Windows; Phase 1's CI is checks-only — DECISION-007.)_
-- **Phase 2** must **verify the HTTP client exposes raw `Set-Cookie` headers** before committing to it (DECISION-002, contract.md §2.4).
-- **SQLite log-retention thresholds** to be finalized in Phase 2/4 (DECISION-003).
-- **HA webhook URL** is a config field added in Phase 5 (CLARIFY-05).
+- ~~**Phase 6** must resolve **GHCR authentication** (PAT scopes, `docker login ghcr.io`) (DECISION-005).~~ — **RESOLVED (Phase 6, 2026-06-27)**: GHCR auth uses the built-in `GITHUB_TOKEN` (`packages: write`), image **public**, tag-triggered build/push in `release.yml` (DECISION-015). _(Moved from Phase 1: Docker is never built/tested on Windows; Phase 1's CI is checks-only — DECISION-007.)_
+- ~~**Phase 2** must **verify the HTTP client exposes raw `Set-Cookie` headers**~~ — **RESOLVED**: undici proven and adopted (DECISION-008, contract.md §2.4).
+- ~~**SQLite log-retention thresholds** to be finalized in Phase 2/4~~ — **RESOLVED**: 10 000 rows OR 10 years (DECISION-008). Still adjustable in the Phase 4 UI.
+- ~~**Phase 2 live finding**: the data-API (`api.chronodrive.com`) `Origin`/`Referer` requirement is INFERRED~~ — **RESOLVED (Phase 3, 2026-06-26)**: the data API `/v1/search-suggestions` was exercised live by the middleware (`ingest:smoke`) with `Origin`/`Referer` present and returned 200 — contract.md §3 note downgraded to CONFIRMED (v1.4.2). Enforcement of a call *without* them remains untested but moot (always sent).
+- ~~**HA webhook URL** is a config field added in Phase 5 (CLARIFY-05).~~ — **RESOLVED (Phase 5, 2026-06-26)**: `ha_webhook_url` config key + once-per-incident HA alert + maintenance/HAR page shipped (DECISION-014).
+- **Phase 6** carries the single-origin Fastify-serves-the-SPA model (DECISION-011) and the `BCG_*` env vars (`BCG_MASTER_KEY`, `BCG_DB_PATH`, `BCG_PORT`, `BCG_HOST`, optional `BCG_UI_DIR`) into the container runtime contract; the SQLite file + master key are the only persistent state to mount.

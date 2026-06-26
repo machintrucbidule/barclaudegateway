@@ -1,0 +1,36 @@
+# BarclaudeGateway — Portainer / Docker Compose stack.
+#
+# One service, one process: Fastify serves the SPA + the /api and /v1 routes. The image is public on
+# GHCR, so no registry credentials are needed. Watchtower (label below) auto-updates the running tag.
+#
+# The ONLY state to back up is the named volume `appdata` (the SQLite file) + the BCG_MASTER_KEY you
+# set below. Lose the key and the encrypted credentials in the DB become unreadable.
+#
+# Stack environment variables (set them in Portainer's "Environment variables" box, or a .env file):
+#   BCG_MASTER_KEY  (REQUIRED) 32-byte key, hex or base64. Generate once and keep it safe:
+#                     openssl rand -hex 32
+#   BCG_TAG         image tag to run (default: latest). Pin e.g. 0.0.1 for a fixed version.
+#   BCG_PORT        host port to publish (default: 8090). Container always listens on 8090.
+
+services:
+  barclaudegateway:
+    image: ghcr.io/machintrucbidule/barclaudegateway:${BCG_TAG:-latest}
+    restart: unless-stopped
+    labels:
+      # Let Watchtower auto-pull a new image when the tag is updated.
+      - 'com.centurylinklabs.watchtower.enable=true'
+    ports:
+      - '${BCG_PORT:-8090}:8090'
+    environment:
+      # Required — the app hard-fails on boot if this is absent. Never commit a real value.
+      BCG_MASTER_KEY: '${BCG_MASTER_KEY:?BCG_MASTER_KEY is required (run: openssl rand -hex 32)}'
+      # SQLite lives on the appdata volume; the default already points there, shown for clarity.
+      BCG_DB_PATH: '/data/barclaudegateway.sqlite'
+      NODE_ENV: production
+    volumes:
+      # The single piece of critical state. Named volume → survives container/image updates.
+      - 'appdata:/data'
+    # Liveness healthcheck (on /livez) is baked into the image; no need to repeat it here.
+
+volumes:
+  appdata:

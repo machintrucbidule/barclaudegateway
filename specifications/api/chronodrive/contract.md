@@ -1,9 +1,10 @@
 # Chronodrive Private API — Contract Specification
 
-**Document version:** 1.4.0
+**Document version:** 1.4.2
 **Spec status:** Draft
 **Last full verification:** 2026-06-26
-**Primary source:** HAR captures from browser session (Firefox 152, authenticated)
+**Auth flow live-verified:** 2026-06-26 — full login (Steps 1+2+3) **and** silent refresh (Steps 2+3) executed end-to-end against production by the middleware (not just a browser HAR).
+**Primary source:** HAR captures from browser session (Firefox 152, authenticated) + live middleware run
 **Maintainer:** Ivan Calmels
 
 ---
@@ -39,6 +40,8 @@ Each endpoint entry references the HAR session that confirmed it. Keep HAR archi
 
 | Version | Date       | Summary                                                                                                                                                                                              |
 | ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.4.2   | 2026-06-26 | §3 data-API `Origin`/`Referer` note downgraded INFERRED → CONFIRMED: `api.chronodrive.com` `/v1/search-suggestions` exercised live by the middleware with the headers present (`ingest:smoke`, Phase 3) → 200. Whether the data API would reject a call *without* them is still untested (the middleware always sends them, so enforcement is moot). |
+| 1.4.1   | 2026-06-26 | Auth §2 live-verified by the middleware. Two corrections: (1) `/identity` + `/oauth/*` require `Origin`/`Referer` headers (else 400 "No origin or referer retrieved"); (2) Step 1 sets the initial Reach5 session cookie that must be forwarded to Step 2. Silent refresh now CONFIRMED live, not just inferred from the JWT. |
 | 1.4.0   | 2026-06-26 | Auth §2: full session cookie mechanism documented. Refresh flow confirmed (Steps 2+3 only, no password, using \_\_Host-SESSION). Session TTL: 72h. No remaining gaps.                                |
 | 1.3.0   | 2026-06-26 | §5.7 get shopping lists: CONFIRMED. §5.11 get single list: new CONFIRMED endpoint. All MVP endpoints now confirmed. Only token refresh remains unknown (non-blocking).                               |
 | 1.2.0   | 2026-06-26 | §5.5+5.6 cart update/remove: CONFIRMED, unified endpoint with signed quantity delta. §5.5 and §5.6 collapsed. Known gaps: only §5.7 (get shopping lists) and token refresh endpoint remain.          |
@@ -65,6 +68,15 @@ The API gateway is **Gravitee** (header `x-gravitee-transaction-id` present on a
 **Status:** `CONFIRMED`
 
 The authentication is a **Reach5 PKCE Authorization Code flow**, executed as three HTTP calls. No browser required — the `response_mode=web_message` mode returns the authorization code inline in an HTML body, parseable without rendering.
+
+### 2.0 — Stateless-client requirements (added 1.4.1, live-verified)
+
+A browser carries two things implicitly that a stateless HTTP client must reproduce, or the flow fails. Both were discovered when the middleware ran the flow for the first time (2026-06-26):
+
+1. **`Origin` + `Referer` headers are mandatory on `connect.chronodrive.com` calls.** Without them, `GET /oauth/authorize` returns **HTTP 400** with body `No origin or referer retrieved`. Send `Origin: https://www.chronodrive.com` and `Referer: https://www.chronodrive.com/` (the `redirect_uri` origin) on Steps 1, 2 and 3. (Step 1 happens to succeed without them, but send them everywhere for safety.)
+2. **Step 1 sets the initial Reach5 session cookie, which Step 2 needs.** `POST /identity/v1/password/login` returns `Set-Cookie` headers in addition to the `tkn`. These cookies must be forwarded in the `Cookie` header of the Step 2 `GET /oauth/authorize` request — `prompt=none` relies on that session existing. A stateless client that captures only the `tkn` (and drops the cookies) gets a 400.
+
+With both in place, the full login **and** the cookie-only silent refresh were confirmed working live against production.
 
 ### 2.1 — Parameters
 
@@ -96,6 +108,8 @@ Content-Type: application/json
 
 The `tkn` is a short-lived Reach5 session token used to complete the PKCE flow. Its TTL is unknown; treat as single-use.
 
+> **CONFIRMED (1.4.1) — Step 1 also sets cookies.** The response carries `Set-Cookie` headers establishing the initial Reach5 session. **Capture them and forward them in the `Cookie` header of the Step 2 request** (see §2.0), otherwise Step 2 fails with a 400. Also send `Origin`/`Referer` on this call.
+
 ### 2.3 — Step 2: Authorization code
 
 Generate a PKCE pair before this call:
@@ -118,6 +132,17 @@ GET https://connect.chronodrive.com/oauth/authorize
   &tkn=<tkn_from_step_1>
 ```
 
+**Required headers (CONFIRMED 1.4.1):**
+
+```
+Origin: https://www.chronodrive.com
+Referer: https://www.chronodrive.com/
+Cookie: <cookies set by Step 1>          ; on initial login
+Cookie: __Host-SESSION=...; __Host-SESSION_LEGACY=...   ; on silent refresh
+```
+
+Omitting `Origin`/`Referer` → **HTTP 400 `No origin or referer retrieved`**. Omitting the Step-1 cookies on initial login → 400 as well (`prompt=none` has no session to silently authorize).
+
 **Response 200** — HTML body containing an inline script:
 
 ```html
@@ -139,6 +164,8 @@ Parse the `code` value from this HTML with a regex or HTML parser. Do not render
 ```
 POST https://connect.chronodrive.com/oauth/token
 Content-Type: application/json
+Origin: https://www.chronodrive.com
+Referer: https://www.chronodrive.com/
 
 {
   "client_id": "DrJyWDmbpV6yYP8ndN8m",
@@ -167,7 +194,7 @@ Content-Type: application/json
 > | `__Host-SESSION`        | 259200s (72h) | Primary session cookie. Must be stored after Step 2 and sent on refresh calls.      |
 > | `__Host-SESSION_LEGACY` | 259200s (72h) | Identical value, no `SameSite=None`. Kept for browser compat; send both on refresh. |
 >
-> **Refresh flow (every ~2h, no password required):** Re-execute Step 2 and Step 3 only, omitting Step 1. Send the stored `__Host-SESSION` and `__Host-SESSION_LEGACY` cookies in the `Cookie` header of the Step 2 request. A successful Step 2 will return a new authorization code; exchange it via Step 3 for a new `access_token`.
+> **Refresh flow (every ~2h, no password required) — CONFIRMED LIVE (1.4.1):** Re-execute Step 2 and Step 3 only, omitting Step 1. Send the stored `__Host-SESSION` and `__Host-SESSION_LEGACY` cookies in the `Cookie` header of the Step 2 request (plus `Origin`/`Referer`). A successful Step 2 returns a new authorization code; exchange it via Step 3 for a new `access_token`. This was exercised end-to-end by the middleware on 2026-06-26 and works — previously only inferred from the JWT `auth_type:refresh` claim.
 >
 > **Session expiry:** If Step 2 returns a `login_required` error (session > 72h old), fall back to full 3-step login (Step 1+2+3 with credentials).
 >
@@ -191,6 +218,8 @@ These headers appear on most API calls. Per-endpoint variations are noted in §5
 | `x-api-key`               | See §4                        | Per service                   |
 | `x-chronodrive-site-id`   | `1016` (Toulouse Basso Cambo) | On cart/list/search endpoints |
 | `x-chronodrive-site-mode` | `DRIVE`                       | On cart/list/search endpoints |
+
+> **`Origin`/`Referer` (CONFIRMED for `api.chronodrive.com`, 1.4.2):** the `connect.chronodrive.com` auth endpoints **require** them (§2.0). For the data API, the middleware exercised `/v1/search-suggestions` live end-to-end on 2026-06-26 (`ingest:smoke`, Phase 3) with `Origin: https://www.chronodrive.com` + `Referer: https://www.chronodrive.com/` present, and it returned 200 — so the data API **accepts** the call with them. Whether it would *reject* a call without them was not tested (the middleware always sends them, so enforcement is moot). The middleware sends them on all calls.
 
 ### 3.1 — x-api-key mapping
 
@@ -625,9 +654,9 @@ Endpoints that must be captured before full implementation. Priority order:
 
 | Priority | Endpoint                           | Blocking?                                  | Capture method                                             |
 | -------- | ---------------------------------- | ------------------------------------------ | ---------------------------------------------------------- |
-| High     | Get shopping lists (§5.7)          | Yes, list UUID is currently hardcoded      | Navigate to shopping lists page, capture GET call          |
-| Medium   | Token refresh endpoint             | No (re-login works), needed for efficiency | Capture `connect.chronodrive.com` requests ~2h after login |
-| Low      | Full product schema field meanings | No                                         | Inspect `search-suggestions` response                      |
+| Low      | Full product schema field meanings | No                                         | Inspect `search-suggestions` response                     |
+
+Previously-listed gaps now closed: **Get shopping lists (§5.7)** — CONFIRMED since 1.3.0. **Token refresh** — CONFIRMED LIVE in 1.4.1 (silent Steps 2+3 exercised by the middleware, not a separate endpoint).
 
 **Confirmed since initial draft (2026-06-26):**
 
@@ -653,6 +682,8 @@ Symptom patterns:
 | Response 200 but unexpected shape                         | Schema change on that endpoint               |
 | `search-suggestions` returns empty products for known EAN | Catalogue restructure or EAN indexing change |
 | Auth step 1 (`/identity/v1/password/login`) returns 4xx   | Reach5 login endpoint changed                |
+| Auth step 2 returns 400 `No origin or referer retrieved`  | Missing `Origin`/`Referer` headers (§2.0)    |
+| Auth step 2 returns 400 but Step 1 succeeded              | Step-1 session cookie not forwarded (§2.0)   |
 
 ### 7.2 — When something breaks
 
