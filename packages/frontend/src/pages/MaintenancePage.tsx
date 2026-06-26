@@ -42,7 +42,15 @@ function buildDebugPrompt(error: ErrorStateError | undefined): string {
   const timestamp = error ? formatTime(error.at) : '(horodatage)';
 
   return [
-    "Je maintiens BarclaudeGateway, un middleware qui relie un scanner ESP32 à l'API privée non documentée de Chronodrive. Une erreur critique vient de se produire et je dois la diagnostiquer.",
+    "Je maintiens BarclaudeGateway, un middleware qui relie un scanner ESP32 à l'API privée non documentée de Chronodrive. Une erreur critique vient de se produire : aide-moi à la diagnostiquer puis à la corriger. Tu travailles directement dans le dépôt.",
+    '',
+    'Commence par lire, pour le contexte :',
+    '- specifications/PROJECT_CONTEXT.md (vue d’ensemble, contrat BCG_*, modèle de déploiement)',
+    '- specifications/decisions.md (décisions d’architecture — notamment DECISION-008 auth, 010 ingestion, 014 détection d’erreur)',
+    '- specifications/api/chronodrive/contract.md (le contrat de l’API privée + le processus de mise à jour §7)',
+    '- docs/esphome-contract.md (contrat ESP32 ↔ middleware : statuts et catégories renvoyés au scanner)',
+    '- specifications/BACKLOG.md et specifications/BACKLOG_ARCHIVE.md (anomalies en cours / déjà traitées)',
+    '- le code backend concerné : packages/backend/src/{auth,chronodrive,http,ingest}/',
     '',
     "Contexte de l'erreur observée :",
     `- Catégorie : ${category}`,
@@ -51,7 +59,18 @@ function buildDebugPrompt(error: ErrorStateError | undefined): string {
     `- Version d'API Chronodrive (x-api-version) : ${apiVersion}`,
     `- Horodatage : ${timestamp}`,
     '',
-    "Je te fournis ci-joint une capture réseau HAR (export Firefox) du parcours qui échoue, dépouillée de ses valeurs sensibles. Compare-la au contrat documenté dans specifications/api/chronodrive/contract.md : identifie précisément ce qui a changé (URL, méthode, en-têtes requis, forme du corps de requête ou de réponse), puis propose d'abord la correction du contrat (en suivant son processus §7.2), puis la correction du code du middleware.",
+    'Je joins une capture réseau HAR (export Firefox) du parcours qui échoue, dépouillée de ses valeurs sensibles (cf. contract.md §8). Compare-la au contrat documenté : identifie précisément ce qui a changé (URL, méthode, en-têtes requis, forme du corps de requête ou de réponse).',
+    '',
+    'Corrige en suivant le processus du projet :',
+    "1. D'abord le contrat (contract.md §7.2) : passe l'endpoint concerné en BROKEN, ajoute l'entrée corrigée, bump la version du contrat et ajoute une ligne de changelog.",
+    '2. Puis le code du middleware pour coller au nouveau contrat, et re-vérifie les autres endpoints.',
+    '3. Garde tous les contrôles verts : npm run lint && npm run format:check && npm run typecheck && npm run test && npm run build.',
+    '',
+    'Trace enfin l’incident dans le backlog (schéma d’entrée du projet) : ajoute une entrée P0 dans specifications/BACKLOG.md (crée le fichier depuis le schéma s’il n’existe pas encore) :',
+    '- [BL-NNN] Titre court à l’impératif — Type: Bug — Priority: P0 — Status: In progress — Source: incident (horodatage ci-dessus)',
+    '- Spec impact: contract.md §X — Affected files: <chemins touchés> — Description: symptôme + cause racine',
+    '- Change to make: la correction concrète — Acceptance criteria: comment vérifier que c’est réglé',
+    'Une fois la correction livrée, déplace l’entrée vers specifications/BACKLOG_ARCHIVE.md (date, ce qui a été fait, référence commit/PR + tag image).',
   ].join('\n');
 }
 

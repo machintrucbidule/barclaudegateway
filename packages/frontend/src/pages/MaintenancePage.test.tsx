@@ -62,6 +62,9 @@ describe('MaintenancePage', () => {
     expect(screen.getByText('Format de réponse')).toBeInTheDocument();
     // The prompt is prefilled and references the contract diff workflow (unique to the prompt text).
     expect(screen.getByText(/specifications\/api\/chronodrive\/contract\.md/)).toBeInTheDocument();
+    // It also lists the context files to read and where to log the incident (Phase 7 backlog).
+    expect(screen.getByText(/specifications\/PROJECT_CONTEXT\.md/)).toBeInTheDocument();
+    expect(screen.getByText(/specifications\/BACKLOG\.md/)).toBeInTheDocument();
     // The observed endpoint surfaces both in the panel and inside the prompt.
     expect(screen.getAllByText(/GET \/search-suggestions/).length).toBeGreaterThan(0);
   });

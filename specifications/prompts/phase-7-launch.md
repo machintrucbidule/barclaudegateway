@@ -98,6 +98,9 @@ honest, complete operator documentation and a clear acceptance sign-off:
    loss behaviour, Chronodrive token refresh/expiry, upstream-down handling, and the error/maintenance/HA
    alert path firing correctly.
 4. **Finalize**: correct any drift in the docs/contract, log the decisions, and record acceptance.
+5. **Initialize the iterative maintenance loop** (ROADMAP Phase 7 §7): create `specifications/BACKLOG.md`
+   and `specifications/BACKLOG_ARCHIVE.md` with their headers + the backlog entry schema, and confirm the
+   three reusable loop prompts are ready — the post-Phase-7 work is driven by that loop, not new phases.
 
 ## Steps (walk in order; for each decision, ask in French and wait)
 
@@ -142,26 +145,40 @@ honest, complete operator documentation and a clear acceptance sign-off:
    Output: a resilience report; any defect becomes an approved fix.
 
 6. **Fix what the validation found (if anything).** Each fix: present in French → approve → implement → keep
-   all gates green → if it warrants a new image, cut a CI tag (`v0.0.2`+, bump `package.json`) and confirm
+   all gates green → if it warrants a new image, cut a CI tag (`v0.0.3`+, bump `package.json`) and confirm
    the new image publishes. Apply any contract.md §7 correction only if a live call contradicts the spec.
 
 7. **Finalize docs & context.** Correct any drift found in `docs/deployment.md` / `docs/esphome-contract.md`
    / contract.md. Record the validation outcomes and any new decisions in PROJECT_CONTEXT.md and decisions.md
-   (DECISION-016+). Ensure the operator can deploy, back up (DB + master key), update, and recover from the
+   (DECISION-017+). Ensure the operator can deploy, back up (DB + master key), update, and recover from the
    docs alone.
 
-8. **Keep the gates green.** `npm run lint && npm run format:check && npm run typecheck && npm run test &&
+8. **Initialize the iterative maintenance loop** (ROADMAP Phase 7 §7). Create
+   `specifications/BACKLOG.md` (the active, clean backlog — only not-yet-developed items, in
+   priority-ordered batches) and `specifications/BACKLOG_ARCHIVE.md` (append-only shipped history), each
+   with its header and the **backlog entry schema** from ROADMAP (`[BL-NNN]` title, Type/Priority/Status/
+   Source/Spec impact/Affected files/Description/Change to make/Acceptance criteria/Batch/Dependencies).
+   Seed `BACKLOG.md` with any already-known open items surfaced during this phase (each as a proper entry),
+   else leave it empty under its headers. Note that the maintenance page's diagnostic prompt already directs
+   a detected Chronodrive breakage into `BACKLOG.md` as a **P0 Bug** (Source: incident), so the loop's
+   detect-and-patch path is wired end to end. Confirm the three reusable loop prompts (intake/triage,
+   develop-a-batch, ops/grooming) are ready to use.
+
+9. **Keep the gates green.** `npm run lint && npm run format:check && npm run typecheck && npm run test &&
    npm run build` and the CI image build all pass before declaring done.
 
 ## Validation gate (end of phase = end of project)
 1. Present a summary in French of the whole campaign: the end-to-end smoke result (states proven on real
    hardware + API), the security/secret review, the resilience/recovery findings, any fixes made (and the
-   image version they shipped in), and the final state of the docs/contract/decisions.
+   image version they shipped in), the initialized `BACKLOG.md` / `BACKLOG_ARCHIVE.md` + the three loop
+   prompts, and the final state of the docs/contract/decisions.
 2. Ask the user: anything to change, add, or challenge? Is the system accepted for everyday use?
 3. Wait for explicit go-ahead.
 4. ONLY THEN: record final **acceptance** (a dated note in PROJECT_CONTEXT.md / decisions.md) and confirm the
-   project is complete. As the final phase, this gate produces **no further phase prompt** — it closes the
-   roadmap. Carry-forward for ongoing operation: the published GHCR image + Portainer stack as the running
-   system, the `BCG_*` runtime contract, the DB-file + master-key backup as the only state, write-only
-   credentials (contract.md §8), the live-call caution (minimal calls, git-ignored `.env`, CGU risk), and the
-   error/maintenance/HAR-diagnosis path as the recovery route if Chronodrive's private API drifts.
+   project is complete. As the final phase, this gate produces **no further phase prompt** — it hands off to
+   the **iterative maintenance loop** (ROADMAP): the three reusable loop prompts + `BACKLOG.md` /
+   `BACKLOG_ARCHIVE.md` drive all subsequent work. Carry-forward for ongoing operation: the published GHCR
+   image + Portainer stack as the running system, the `BCG_*` runtime contract, the DB-file + master-key
+   backup as the only state, write-only credentials (contract.md §8), the live-call caution (minimal calls,
+   git-ignored `.env`, CGU risk), and the error/maintenance/HAR-diagnosis path — which logs incidents into
+   `BACKLOG.md` as P0 items — as the recovery route if Chronodrive's private API drifts.
