@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { AuthError } from '../http/errors.js';
+import { AuthError, NotConfiguredError } from '../http/errors.js';
 import type { Database } from './db.js';
 import { openDatabase } from './db.js';
 import {
@@ -82,8 +82,10 @@ describe('createCredentialsLoader', () => {
     await expect(createCredentialsLoader(store)()).resolves.toEqual(CREDS);
   });
 
-  it('rejects with AuthError when none are configured', async () => {
+  it('rejects with NotConfiguredError (benign, not an auth failure) when none are configured', async () => {
     const store = new CredentialStore(db, KEY);
-    await expect(createCredentialsLoader(store)()).rejects.toBeInstanceOf(AuthError);
+    const rejection = createCredentialsLoader(store)();
+    await expect(rejection).rejects.toBeInstanceOf(NotConfiguredError);
+    await expect(rejection).rejects.toMatchObject({ category: 'not_configured' });
   });
 });

@@ -277,7 +277,8 @@ describe('api routes (fastify.inject)', () => {
     expect(res.body).not.toContain(SECRET_PASSWORD);
   });
 
-  it('GET /api/health runs the self-test', async () => {
+  it('GET /api/health runs the self-test when configured', async () => {
+    h.credentialStore.save({ email: 'user@example.com', password: SECRET_PASSWORD });
     pool
       .intercept({ path: pathIs('/v1/search-suggestions'), method: 'GET' })
       .reply(200, { products: [{ id: 'P', labels: {}, eans: [], stock: 'HIGH_STOCK' }] });
@@ -291,6 +292,14 @@ describe('api routes (fastify.inject)', () => {
     const res = await h.app.inject({ method: 'GET', url: '/api/health' });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toHaveProperty('checks');
+    expect(res.json().checks.length).toBeGreaterThan(0);
+  });
+
+  it('GET /api/health skips the probe (configured:false, no checks) when not configured', async () => {
+    // No interceptors: the self-test must not attempt any connection.
+    const res = await h.app.inject({ method: 'GET', url: '/api/health' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ configured: false, checks: [] });
   });
 });
 

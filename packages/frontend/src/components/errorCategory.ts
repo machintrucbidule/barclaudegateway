@@ -65,6 +65,12 @@ export const ERROR_CATEGORY_LABELS: Record<ErrorCategory, ErrorCategoryLabel> = 
       "L'EAN scanné n'existe pas dans le catalogue Chronodrive. C'est un résultat normal, pas une panne — il apparaît sur le tableau de bord et ne déclenche pas d'alerte.",
     color: 'orange',
   },
+  not_configured: {
+    label: 'À configurer',
+    explanation:
+      "Chronodrive n'est pas encore configuré : renseignez vos identifiants dans la page Configuration. Tant que ce n'est pas fait, aucune connexion n'est tentée — ce n'est pas une panne.",
+    color: 'blue',
+  },
   unknown: {
     label: 'Erreur inconnue',
     explanation:

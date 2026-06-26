@@ -61,6 +61,7 @@ describe('ingest server (fastify.inject)', () => {
   let pool: ReturnType<MockAgent['get']>;
   let db: Database;
   let app: FastifyInstance;
+  let credentialStore: CredentialStore;
 
   beforeEach(() => {
     original = getGlobalDispatcher();
@@ -75,7 +76,9 @@ describe('ingest server (fastify.inject)', () => {
     const destinations = new DestinationsStore(configStore);
     destinations.write({ cart: true, lists: [] });
     const scanLog = new ScanLog(db);
-    const credentialStore = new CredentialStore(db, Buffer.alloc(32));
+    credentialStore = new CredentialStore(db, Buffer.alloc(32));
+    // Configured by default so /health runs the real checks; the not-configured case is tested below.
+    credentialStore.save({ email: 'tester@example.com', password: 'pw' });
     const events = new ScanEventBus();
     const chronodrive = new ChronodriveClient({
       http: quietClient(),
@@ -169,6 +172,15 @@ describe('ingest server (fastify.inject)', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ ok: true });
+  });
+
+  it('GET /health → 200 with configured:false and no checks when not configured', async () => {
+    // No interceptors: if the self-test tried to connect, disableNetConnect would fail the test.
+    credentialStore.clear();
+    const res = await app.inject({ method: 'GET', url: '/health' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: false, configured: false, checks: [] });
   });
 
   it('GET /livez → 200 without touching Chronodrive', async () => {

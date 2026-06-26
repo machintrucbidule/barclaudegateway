@@ -19,6 +19,10 @@ coverage/
 *.sqlite3
 *.db
 
+# Local Windows test environment (scripts/windows/*.bat) — holds the test SQLite
+# DB and the generated test master key. NEVER commit (the key is a secret).
+.testdata/
+
 # Logs
 *.log
 npm-debug.log*

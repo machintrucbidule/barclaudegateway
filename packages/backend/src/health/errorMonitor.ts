@@ -91,6 +91,11 @@ export class ErrorMonitor {
 
   /** Classify a health self-test: recovery clears; the first critical failing check raises the surface. */
   ingestHealthReport(report: HealthReport): void {
+    // "Not configured" is an informational state, never a breakage: ensure the surface stays clear.
+    if (report.configured === false) {
+      this.clear();
+      return;
+    }
     if (report.ok) {
       this.clear();
       return;

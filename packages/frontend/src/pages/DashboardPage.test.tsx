@@ -50,4 +50,30 @@ describe('DashboardPage', () => {
     // The unmatched EAN appears both in the alert and the table row.
     expect(screen.getAllByText(/222/).length).toBeGreaterThan(0);
   });
+
+  it('shows an informational message (not an error) when not configured', async () => {
+    const NOT_CONFIGURED: HealthReport = {
+      ok: false,
+      configured: false,
+      checks: [],
+      apiVersions: {},
+      checkedAt: 0,
+    };
+    mockFetch((url) => {
+      if (url.includes('/api/health')) return { body: NOT_CONFIGURED };
+      if (url.includes('/api/scans')) return { body: SCANS };
+      return { body: {} };
+    });
+
+    renderWithProviders(<DashboardPage />);
+
+    // Informational call-to-action, not the degraded/error state.
+    expect(await screen.findByText("Chronodrive n'est pas encore configuré")).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'page Configuration' })).toHaveAttribute(
+      'href',
+      '/config',
+    );
+    // The degraded health badge must NOT be shown.
+    expect(screen.queryByText('Dégradé')).not.toBeInTheDocument();
+  });
 });

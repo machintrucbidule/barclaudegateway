@@ -182,6 +182,7 @@ export type ErrorCategory =
   | 'api_key' // 401/403 isolated to one x-api-key service → key rotated
   | 'schema' // 200 but unexpected shape → endpoint changed
   | 'not_found' // product/list not found (business-level, not a breakage)
+  | 'not_configured' // no Chronodrive credentials saved yet → not an error, just unconfigured
   | 'rate_limit' // 429
   | 'server' // 5xx
   | 'network' // connection refused/reset/DNS
@@ -214,6 +215,12 @@ export interface EndpointCheck {
 /** Aggregate result of the read-only self-test. `ok` is true only when every check passed. */
 export interface HealthReport {
   ok: boolean;
+  /**
+   * Whether Chronodrive credentials are saved. `false` means the self-test was skipped entirely (no
+   * connection attempted) because nothing is configured yet — an informational state, not a failure.
+   * Absent/true means credentials are present and the checks ran.
+   */
+  configured?: boolean;
   siteId?: string;
   checks: EndpointCheck[];
   apiVersions: XApiVersions;
