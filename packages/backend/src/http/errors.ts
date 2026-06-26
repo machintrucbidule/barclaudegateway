@@ -73,6 +73,17 @@ export class NotFoundError extends ChronodriveError {
   }
 }
 
+/**
+ * No Chronodrive credentials saved yet. NOT a breakage and NOT an auth failure: the operator simply
+ * has not configured them. Kept out of the critical set so it never raises the maintenance surface;
+ * the UI shows an informational "configure me" message instead.
+ */
+export class NotConfiguredError extends ChronodriveError {
+  constructor(message: string, options: ChronodriveErrorOptions = {}) {
+    super('not_configured', message, options);
+  }
+}
+
 /** HTTP 429. Carries the parsed `Retry-After` (seconds) when present. */
 export class RateLimitError extends ChronodriveError {
   readonly retryAfterSeconds?: number;

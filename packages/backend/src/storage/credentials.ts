@@ -8,7 +8,7 @@
  */
 
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-import { AuthError } from '../http/errors.js';
+import { AuthError, NotConfiguredError } from '../http/errors.js';
 import type { Credentials } from '../auth/login.js';
 import type { Database } from './db.js';
 
@@ -91,13 +91,15 @@ export class CredentialStore {
 
 /**
  * Bridge the credential store to the auth lifecycle: a loader that yields the stored credentials or
- * fails clearly when none are configured (so the operator knows to set them in the UI).
+ * signals — via the benign {@link NotConfiguredError}, not an `auth` failure — that none are saved yet,
+ * so callers (scan pipeline, health self-test, destinations) treat "not configured" as an
+ * informational state rather than a critical breakage.
  */
 export function createCredentialsLoader(store: CredentialStore): () => Promise<Credentials> {
   return async () => {
     const credentials = store.load();
     if (!credentials) {
-      throw new AuthError('No Chronodrive credentials configured');
+      throw new NotConfiguredError('No Chronodrive credentials configured');
     }
     return credentials;
   };

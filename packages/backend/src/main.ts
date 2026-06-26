@@ -57,7 +57,9 @@ export async function main(): Promise<void> {
   // Background health self-test: detect a breakage even with no scans (the user chose "both"). Run once
   // at startup, then every 6h. Failures are swallowed — a self-test crash must not take the server down.
   const runSelfTest = (): void => {
-    void runHealthSelfTest(services.chronodrive)
+    void runHealthSelfTest(services.chronodrive, {
+      isConfigured: () => services.credentialStore.has(),
+    })
       .then((report) => {
         errorMonitor.ingestHealthReport(report);
       })

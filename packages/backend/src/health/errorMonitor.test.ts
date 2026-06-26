@@ -100,6 +100,30 @@ describe('ErrorMonitor', () => {
     expect(monitor.getState()).toEqual({ active: false });
   });
 
+  it('treats a "not configured" report as benign: never raises, and clears any surface', () => {
+    const monitor = new ErrorMonitor();
+    // From clean: a not-configured report must not raise anything.
+    monitor.ingestHealthReport({
+      ok: false,
+      configured: false,
+      checks: [],
+      apiVersions: {},
+      checkedAt: 1,
+    });
+    expect(monitor.getState()).toEqual({ active: false });
+    // And it clears a previously active surface (e.g. credentials were removed).
+    monitor.ingestScan(scan({ status: 'error', category: 'auth', message: 'down' }));
+    expect(monitor.getState().active).toBe(true);
+    monitor.ingestHealthReport({
+      ok: false,
+      configured: false,
+      checks: [],
+      apiVersions: {},
+      checkedAt: 2,
+    });
+    expect(monitor.getState()).toEqual({ active: false });
+  });
+
   it('emits only on genuine transitions, not on every repeat of the same incident', () => {
     const monitor = new ErrorMonitor();
     const seen: ErrorState[] = [];

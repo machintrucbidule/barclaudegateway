@@ -117,8 +117,12 @@ export function buildServer(deps: ServerDeps, options: ServerOptions = {}): Fast
   });
 
   app.get('/health', async (_request, reply) => {
-    const report = await runHealthSelfTest(deps.chronodrive);
-    reply.code(report.ok ? 200 : 503).send(report);
+    const report = await runHealthSelfTest(deps.chronodrive, {
+      isConfigured: () => deps.credentialStore.has(),
+    });
+    // 503 only on a real failure. "Not configured yet" is informational, so report it as 200.
+    const healthy = report.ok || report.configured === false;
+    reply.code(healthy ? 200 : 503).send(report);
   });
 
   // Liveness probe for the container healthcheck: confirms the HTTP server is up, WITHOUT touching

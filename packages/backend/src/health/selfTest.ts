@@ -23,14 +23,33 @@ function describeError(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).slice(0, 200);
 }
 
+export interface HealthSelfTestOptions {
+  /**
+   * Whether Chronodrive credentials are saved. When this returns `false` the self-test is skipped
+   * entirely — no connection is attempted — and the report carries `configured: false`, so a
+   * brand-new install never reports a (non-existent) breakage.
+   */
+  isConfigured?: () => boolean;
+  /** Injectable clock for deterministic tests. */
+  now?: () => number;
+}
+
 /**
  * Run the read-only checks against the live (or mocked) Chronodrive API and aggregate the result.
- * `ok` is true only when every check passed.
+ * `ok` is true only when every check passed. When `isConfigured()` returns false the checks are
+ * skipped (no network call) and the report is `{ ok: false, configured: false, checks: [] }`.
  */
 export async function runHealthSelfTest(
   client: ChronodriveClient,
-  now: () => number = Date.now,
+  options: HealthSelfTestOptions = {},
 ): Promise<HealthReport> {
+  const now = options.now ?? Date.now;
+
+  // Nothing configured yet → do NOT try to connect. This is an informational state, not a failure.
+  if (options.isConfigured && !options.isConfigured()) {
+    return { ok: false, configured: false, checks: [], apiVersions: {}, checkedAt: now() };
+  }
+
   const checks: EndpointCheck[] = [];
 
   const run = async (name: string, endpoint: string, fn: () => Promise<string>): Promise<void> => {
@@ -76,6 +95,7 @@ export async function runHealthSelfTest(
 
   return {
     ok: checks.every((c) => c.status === 'ok'),
+    configured: true,
     siteId,
     checks,
     apiVersions,

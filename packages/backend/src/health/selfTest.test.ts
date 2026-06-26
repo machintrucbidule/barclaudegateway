@@ -101,8 +101,9 @@ describe('runHealthSelfTest', () => {
       },
     });
 
-    const report = await runHealthSelfTest(client(), () => 1234);
+    const report = await runHealthSelfTest(client(), { now: () => 1234 });
     expect(report.ok).toBe(true);
+    expect(report.configured).toBe(true);
     expect(report.siteId).toBe('1016');
     expect(report.checkedAt).toBe(1234);
     expect(report.checks).toHaveLength(4);
@@ -143,6 +144,21 @@ describe('runHealthSelfTest', () => {
     expect(search?.detail).toContain('no product');
     // The other three still ran and passed.
     expect(report.checks.filter((c) => c.status === 'ok')).toHaveLength(3);
+  });
+
+  it('short-circuits without any connection when not configured', async () => {
+    // No interceptors registered: if it tried to connect, disableNetConnect would make the test fail.
+    const report = await runHealthSelfTest(client(), {
+      isConfigured: () => false,
+      now: () => 7,
+    });
+    expect(report).toEqual({
+      ok: false,
+      configured: false,
+      checks: [],
+      apiVersions: {},
+      checkedAt: 7,
+    });
   });
 
   it('reports an error check when the token/auth fails (401)', async () => {

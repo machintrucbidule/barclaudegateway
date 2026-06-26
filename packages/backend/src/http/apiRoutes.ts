@@ -175,7 +175,11 @@ export const apiRoutes: FastifyPluginAsync<{ deps: ApiDeps }> = (app, opts) => {
   });
 
   // ---- Health -------------------------------------------------------------------------------
-  app.get('/health', async () => runHealthSelfTest(deps.chronodrive));
+  // Skip the probe entirely (no connection attempt) until credentials are saved; the dashboard then
+  // shows an informational "not configured yet" message instead of a degraded/error state.
+  app.get('/health', async () =>
+    runHealthSelfTest(deps.chronodrive, { isConfigured: () => deps.credentialStore.has() }),
+  );
 
   // ---- Critical-error surface (Phase 5) -----------------------------------------------------
   // Current state for the maintenance page/banner's initial load (the SSE stream below pushes changes).

@@ -1,12 +1,37 @@
 import type { JSX } from 'react';
 import { useEffect, useState } from 'react';
-import { Alert, Badge, Card, Group, Loader, Stack, Table, Text, Title } from '@mantine/core';
+import {
+  Alert,
+  Anchor,
+  Badge,
+  Card,
+  Group,
+  Loader,
+  Stack,
+  Table,
+  Text,
+  Title,
+} from '@mantine/core';
+import { Link } from 'react-router-dom';
 import type { HealthReport, ScanRecord, ScansResponse } from '@barclaudegateway/shared';
 import { api } from '../api/client.js';
 import { StatusBadge } from '../components/StatusBadge.js';
 
 function formatTime(epochMs: number): string {
   return new Date(epochMs).toLocaleString('fr-FR');
+}
+
+/** Shown before any credentials are saved: an informational call-to-action, not an error. */
+function NotConfiguredCard(): JSX.Element {
+  return (
+    <Alert color="blue" title="Chronodrive n'est pas encore configuré">
+      Aucune connexion n'est tentée tant que vos identifiants ne sont pas renseignés. Ouvrez la{' '}
+      <Anchor component={Link} to="/config" fw={600}>
+        page Configuration
+      </Anchor>{' '}
+      pour saisir votre e-mail et votre mot de passe Chronodrive.
+    </Alert>
+  );
 }
 
 function HealthCard({ health }: { health: HealthReport }): JSX.Element {
@@ -140,7 +165,15 @@ export function DashboardPage(): JSX.Element {
     <Stack maw={840}>
       <Title order={2}>Tableau de bord</Title>
       {error && <Alert color="red">{error}</Alert>}
-      {health ? <HealthCard health={health} /> : <Loader />}
+      {health ? (
+        health.configured === false ? (
+          <NotConfiguredCard />
+        ) : (
+          <HealthCard health={health} />
+        )
+      ) : (
+        <Loader />
+      )}
       {scans ? <RecentScans data={scans} /> : <Loader />}
     </Stack>
   );
