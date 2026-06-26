@@ -1,0 +1,29 @@
+{
+  "name": "@barclaudegateway/frontend",
+  "version": "0.0.1",
+  "private": true,
+  "description": "BarclaudeGateway local web UI: config, dashboard and live log stream (built from Phase 4).",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@barclaudegateway/shared": "0.0.1",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "16.3.2",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.3",
+    "jsdom": "29.1.1",
+    "vite": "8.1.0"
+  }
+}

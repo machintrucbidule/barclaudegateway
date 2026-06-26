@@ -1,0 +1,9 @@
+node_modules
+dist
+build
+coverage
+*.tsbuildinfo
+package-lock.json
+
+# Project specification documents — authored prose, kept as written.
+specifications

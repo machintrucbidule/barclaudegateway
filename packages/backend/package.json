@@ -1,0 +1,20 @@
+{
+  "name": "@barclaudegateway/backend",
+  "version": "0.0.1",
+  "private": true,
+  "description": "BarclaudeGateway backend: Chronodrive auth engine, token lifecycle and API client (built from Phase 2).",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@barclaudegateway/shared": "0.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "26.0.1"
+  }
+}

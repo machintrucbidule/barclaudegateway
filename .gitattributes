@@ -1,0 +1,12 @@
+# Normalize all text files to LF in the repository, on every platform.
+# This keeps Prettier (endOfLine: "lf") consistent between Windows dev and Linux CI.
+* text=auto eol=lf
+
+# Binary files Git must never touch.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary

@@ -1,0 +1,39 @@
+name: CI
+
+# Checks-only pipeline (Phase 1): lint + typecheck + tests + build on every push and pull request.
+# No Docker image is built here — image build/publish to GHCR is wired on version tags in Phase 6.
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test
+
+      - name: Build
+        run: npm run build

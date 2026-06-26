@@ -1,0 +1,23 @@
+{
+  "name": "@barclaudegateway/shared",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Shared Chronodrive contract types, imported by both the backend and the frontend.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}
