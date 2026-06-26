@@ -13,19 +13,31 @@ A self-hosted middleware that bridges an ESP32 barcode scanner (ESPHome) with th
 
 ## Repository layout
 
+npm-workspaces monorepo (DECISION-006), bootstrapped in Phase 1:
+
 ```
 barclaudegateway/
   specifications/
-    api/
-      chronodrive/
-        contract.md         ← Chronodrive private API spec (reverse-engineered, v1.4.0)
-    PROJECT_CONTEXT.md      ← this file
-    ROADMAP.md              ← development roadmap (generated, living doc)
-    decisions.md            ← all architecture decisions with rationale
-  src/                      ← application source (created in later steps)
-  docker/                   ← Dockerfile, compose
-  .github/workflows/        ← CI/CD for GHCR
+    api/chronodrive/contract.md  ← Chronodrive private API spec (reverse-engineered, v1.4.0)
+    PROJECT_CONTEXT.md           ← this file
+    ROADMAP.md                   ← development roadmap (generated, living doc)
+    decisions.md                 ← all architecture decisions with rationale
+    prompts/                     ← per-phase launch prompts
+  packages/
+    shared/                      ← @barclaudegateway/shared: contract types shared by both sides
+    backend/                     ← @barclaudegateway/backend: Node/TS service (Phase 2+)
+    frontend/                    ← @barclaudegateway/frontend: React + Vite web UI (Phase 4+)
+  docs/dev-setup.md              ← reproducible Windows dev-environment steps
+  .github/workflows/ci.yml       ← checks-only CI (lint + format + typecheck + test + build)
+  package.json                   ← workspace root (private, version 0.0.1, aggregated scripts)
+  tsconfig.base.json             ← shared TypeScript compiler options
+  eslint.config.js               ← ESLint flat config
+  .prettierrc.json / .editorconfig / .gitattributes / .npmrc
+  .husky/pre-commit              ← runs lint-staged on staged .ts/.tsx files
 ```
+
+> `docker/` and the image-publish workflow are intentionally **absent** until Phase 6
+> (Docker is never built or tested on Windows). The version starts at **0.0.1**.
 
 ---
 
@@ -48,6 +60,17 @@ barclaudegateway/
 - **Repo structure**: Monorepo, backend + frontend in one repo, one Docker build (DECISION-006).
 - **CI/CD**: GitHub Actions, two triggers (DECISION-005 release model). Routine push/PR → checks only (lint + tests). Version tag (e.g. `v0.0.2`, user-initiated) → build + publish the versioned Docker image to GHCR. App starts at **0.0.1**. Docker is never built/tested on Windows; all Docker/GHCR setup lives in **Phase 6**.
 - **ESP32 → app protocol**: HTTP POST, synchronous response (DECISION-001).
+
+### Dev tooling (DECIDED — Phase 1, see DECISION-007)
+
+- **Package manager**: npm with native **workspaces** (`packages/shared|backend|frontend`). Exact versions pinned (`.npmrc` `save-exact`); Node/npm enforced via `engines` + `engine-strict`. Target runtime: **Node 24 LTS**.
+- **Cross-package type sharing**: `@barclaudegateway/shared`'s `types`/`exports` point at its source, so both sides typecheck against the same source with no build-order coupling (Phase-1 imports are type-only).
+- **TypeScript**: shared `tsconfig.base.json` (strict); per-package `tsconfig.json` for typecheck (`tsc --noEmit`) and `tsconfig.build.json` (excludes tests) for emit.
+- **Lint/format**: ESLint flat config + Prettier (LF enforced via `.gitattributes` + `.editorconfig`).
+- **Tests**: **Vitest** (backend = node env, frontend = jsdom + Testing Library), scoped to `src/`.
+- **Pre-commit**: Husky + lint-staged (ESLint `--fix` + Prettier on staged `.ts`/`.tsx`).
+- **CI**: `.github/workflows/ci.yml`, checks-only on push/PR (install → lint → format check → typecheck → test → build). No image build (Phase 6).
+- **Git conventions** (`CONTRIBUTING.md`): branches `feature/`·`fix/`·`chore/`·`docs/`; **Conventional Commits**; release = bump version → push `vX.Y.Z` tag (triggers the image build in Phase 6).
 
 ### Chronodrive API
 
@@ -94,6 +117,7 @@ All Phase 0 architecture decisions and functional clarifications are resolved. S
 | ESPHome → middleware protocol  | RESOLVED | HTTP POST (DECISION-001)             |
 | Monorepo vs packages           | RESOLVED | Monorepo (DECISION-006)              |
 | CI/CD pipeline for GHCR        | RESOLVED | GitHub Actions → GHCR (DECISION-005) |
+| Monorepo dev tooling           | RESOLVED | npm workspaces + ESLint/Prettier/Vitest/Husky (DECISION-007) |
 
 ---
 

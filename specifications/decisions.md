@@ -174,10 +174,33 @@
 
 ---
 
+## Resolved — Implementation decisions (Phase 1)
+
+### [DECISION-007] Monorepo dev tooling
+
+- **Date**: 2026-06-26
+- **Question**: Which package manager and baseline tooling implement the monorepo (DECISION-006) on Windows 11?
+- **Options considered**:
+  - Package manager — **npm workspaces** | Impact: bundled with Node, zero extra install, native workspaces; slightly slower installs.
+  - Package manager — pnpm | Impact: faster, disk-efficient, monorepo-friendly; one more tool to install on every machine and in CI.
+- **Decision**: **npm workspaces**, with the following baseline tooling:
+  - **TypeScript** strict, shared `tsconfig.base.json`; per-package `tsconfig.json` (typecheck, `--noEmit`) + `tsconfig.build.json` (emit, excludes tests).
+  - **ESLint** (flat config) + **Prettier**; LF line endings enforced via `.gitattributes` / `.editorconfig`.
+  - **Vitest** for tests (backend: node; frontend: jsdom + Testing Library), scoped to `src/`.
+  - **Husky** + **lint-staged** pre-commit hook (user opted in).
+  - Exact-version pinning (`.npmrc` `save-exact`); Node 24 LTS enforced via `engines` + `engine-strict`.
+  - **Cross-package type sharing** without build-order coupling: `@barclaudegateway/shared` exposes its `types`/`exports` from source, and Phase-1 cross-imports are type-only.
+  - **CI** (`.github/workflows/ci.yml`): checks-only on push/PR — install → lint → format check → typecheck → test → build. No image build.
+  - **Git conventions** (`CONTRIBUTING.md`): `feature/`·`fix/`·`chore/`·`docs/` branches; Conventional Commits; release = bump version → push `vX.Y.Z` tag.
+- **Decided by**: User (Ivan) — package manager and pre-commit hook chosen explicitly; the rest are standard-ecosystem defaults presented and approved.
+- **Rationale**: Keep the toolchain minimal and zero-extra-install on Windows while staying strict and reproducible. npm workspaces satisfy the monorepo shared-types need without publishing a package. Repo: <https://github.com/machintrucbidule/barclaudegateway> (public, MIT).
+
+---
+
 ## Cross-cutting consequences for later phases
 
 - **Phase 3** must define a **rich HTTP response contract** (multiple distinct states: success / not-found / ineligible / out-of-stock / API error) so ESPHome can drive LED colors + buzzer (CLARIFY-04).
-- **Phase 1** must resolve **GHCR authentication on Windows** (PAT scopes, `docker login ghcr.io`) (DECISION-005).
+- **Phase 6** must resolve **GHCR authentication** (PAT scopes, `docker login ghcr.io`) (DECISION-005). _(Moved from Phase 1: Docker is never built/tested on Windows; Phase 1's CI is checks-only — DECISION-007.)_
 - **Phase 2** must **verify the HTTP client exposes raw `Set-Cookie` headers** before committing to it (DECISION-002, contract.md §2.4).
 - **SQLite log-retention thresholds** to be finalized in Phase 2/4 (DECISION-003).
 - **HA webhook URL** is a config field added in Phase 5 (CLARIFY-05).
