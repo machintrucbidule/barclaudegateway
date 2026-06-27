@@ -1,0 +1,227 @@
+# =============================================================================
+# BarclaudeGateway scanner — ESP32-C6 Supermini + GM861S (UART)
+#
+# Reads a barcode from the GM861S over UART, POSTs it to the BarclaudeGateway
+# middleware (POST /v1/scan { "ean": "..." }), waits for the synchronous
+# ScanResponse, and drives:
+#   - an EXTERNAL WS2812 LED  -> colour per ScanResponse.status
+#   - an EXTERNAL active buzzer -> sound ONLY on a failure outcome
+# Contract: docs/esphome-contract.md (the middleware always returns a JSON
+# ScanResponse body, even on HTTP 400/502, so we switch on `status`).
+#
+# ESP32-C6 requires the esp-idf framework in ESPHome (Arduino does not support
+# the C6). Needs a recent ESPHome (esp-idf >= 5.1).
+#
+# ---------------------------------------------------------------------------
+# Wiring (all pins are configurable in the `substitutions:` block below):
+#   GM861S  TX  -> ESP RX  (gm861_rx_pin, default GPIO17)
+#   GM861S  RX  -> ESP TX  (gm861_tx_pin, default GPIO16)   # optional, config only
+#   GM861S  VCC -> 3V3     GND -> GND        # GM861S is 3.3 V TTL — do NOT use 5 V logic
+#   WS2812  DIN -> led_pin    (default GPIO8)    VCC/GND as per the module
+#   Buzzer  +   -> buzzer_pin (default GPIO10)   - -> GND   # active buzzer (beeps on HIGH)
+#
+# GM861S one-time setup (scan these config barcodes from its manual):
+#   1. Output interface = UART / TTL-232, 9600 bps, 8N1
+#   2. Scan mode = auto-induction / continuous (so it emits on every decode)
+#   3. End suffix = CR or LF (this firmware accepts either)
+#   4. DISABLE the "good read" beep  <-- so the ONLY sound is our error buzzer
+# =============================================================================
+
+substitutions:
+  device_name: barclaude-scanner
+  friendly_name: 'Barclaude Scanner'
+
+  # --- WiFi --- (or switch these two to `!secret wifi_ssid` / `!secret wifi_password`)
+  wifi_ssid: 'YOUR_WIFI_SSID'
+  wifi_password: 'YOUR_WIFI_PASSWORD'
+
+  # --- BarclaudeGateway middleware (host + port) ---
+  server_host: '192.168.1.37'
+  server_port: '8791'
+
+  # --- GM861S UART ---
+  gm861_rx_pin: 'GPIO17' # ESP RX  <- scanner TX
+  gm861_tx_pin: 'GPIO16' # ESP TX  -> scanner RX (only needed to configure the scanner)
+  gm861_baud: '9600'
+
+  # --- Feedback hardware ---
+  led_pin: 'GPIO8' # WS2812 data-in
+  buzzer_pin: 'GPIO10' # active buzzer +
+
+  # --- Timing ---
+  http_timeout: '8s'
+  feedback_ms: '1500ms' # how long the LED holds the result colour
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: esp32-c6-devkitc-1
+  framework:
+    type: esp-idf
+
+logger:
+  level: INFO
+
+# Home Assistant API (add an encryption key if you expose it to HA).
+api:
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: ${wifi_ssid}
+  password: ${wifi_password}
+  # First-boot fallback hotspot so you can enter credentials if WiFi fails.
+  ap:
+    ssid: '${friendly_name} Setup'
+
+captive_portal:
+
+# HTTP client used to POST scans to the middleware.
+http_request:
+  useragent: barclaude-scanner
+  timeout: ${http_timeout}
+  verify_ssl: false # local HTTP, no TLS
+
+# Serial link to the GM861S scanner.
+uart:
+  id: gm861_uart
+  rx_pin: ${gm861_rx_pin}
+  tx_pin: ${gm861_tx_pin}
+  baud_rate: ${gm861_baud}
+
+# External WS2812 status LED (single addressable pixel).
+light:
+  - platform: esp32_rmt_led_strip
+    id: status_led
+    name: '${friendly_name} LED'
+    pin: ${led_pin}
+    num_leds: 1
+    chipset: WS2812
+    rgb_order: GRB
+    default_transition_length: 0s
+    restore_mode: ALWAYS_OFF
+
+# External active buzzer (HIGH = sound).
+output:
+  - platform: gpio
+    id: buzzer_out
+    pin: ${buzzer_pin}
+
+globals:
+  # Assembles the incoming barcode characters until a CR/LF terminator.
+  - id: scan_buf
+    type: std::string
+    restore_value: no
+  # True between sending a request and getting a response; if it stays true
+  # after the POST returns, the server was unreachable.
+  - id: awaiting_response
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+# Poll the scanner UART, assemble a line, and fire a scan on the terminator.
+interval:
+  - interval: 50ms
+    then:
+      - lambda: |-
+          while (id(gm861_uart).available()) {
+            uint8_t c;
+            if (!id(gm861_uart).read_byte(&c)) break;
+            if (c == '\r' || c == '\n') {
+              if (!id(scan_buf).empty()) {
+                std::string ean = id(scan_buf);
+                id(scan_buf).clear();
+                id(send_scan)->execute(ean);
+              }
+            } else if (c >= 0x20 && c < 0x7f) {
+              id(scan_buf).push_back((char) c);
+              if (id(scan_buf).size() > 32) id(scan_buf).clear();  // guard against garbage
+            }
+          }
+
+script:
+  # Show a colour for `feedback_ms`, then turn the LED off. RGB in 0..255.
+  - id: set_led
+    mode: restart
+    parameters:
+      r: int
+      g: int
+      b: int
+    then:
+      - light.turn_on:
+          id: status_led
+          red: !lambda 'return r / 255.0f;'
+          green: !lambda 'return g / 255.0f;'
+          blue: !lambda 'return b / 255.0f;'
+          brightness: 100%
+      - delay: ${feedback_ms}
+      - light.turn_off: status_led
+
+  # Short double beep — used only on failure outcomes.
+  - id: error_beep
+    mode: restart
+    then:
+      - output.turn_on: buzzer_out
+      - delay: 120ms
+      - output.turn_off: buzzer_out
+      - delay: 90ms
+      - output.turn_on: buzzer_out
+      - delay: 120ms
+      - output.turn_off: buzzer_out
+
+  # POST one EAN to the middleware and react to the ScanResponse.
+  - id: send_scan
+    mode: restart
+    parameters:
+      ean: string
+    then:
+      - lambda: 'id(awaiting_response) = true;'
+      - http_request.post:
+          url: 'http://${server_host}:${server_port}/v1/scan'
+          capture_response: true
+          headers:
+            Content-Type: application/json
+          json: |-
+            root["ean"] = ean;
+          on_response:
+            then:
+              - lambda: |-
+                  id(awaiting_response) = false;
+                  std::string status = "error";
+                  json::parse_json(body, [&](JsonObject root) -> bool {
+                    status = root["status"] | "error";
+                    return true;
+                  });
+                  ESP_LOGI("scan", "ean=%s status=%s http=%d", ean.c_str(), status.c_str(),
+                           response->status_code);
+
+                  // LED colour per status; buzzer ONLY on a failure outcome.
+                  if (status == "added") {
+                    id(set_led)->execute(0, 180, 0);          // green: added to cart/list
+                  } else if (status == "added_to_lists_only") {
+                    id(set_led)->execute(255, 80, 0);         // orange: unavailable -> lists only
+                  } else if (status == "duplicate_ignored") {
+                    id(set_led)->execute(0, 180, 0);          // green: debounced repeat
+                  } else if (status == "partial") {
+                    id(set_led)->execute(255, 80, 0);         // orange + beep: some destinations failed
+                    id(error_beep)->execute();
+                  } else {
+                    // not_found, invalid_ean, error, and any unknown -> red + beep
+                    id(set_led)->execute(200, 0, 0);
+                    id(error_beep)->execute();
+                  }
+      # No response received (server unreachable / WiFi issue) -> red + beep.
+      - if:
+          condition:
+            lambda: 'return id(awaiting_response);'
+          then:
+            - lambda: 'id(awaiting_response) = false;'
+            - script.execute:
+                id: set_led
+                r: 200
+                g: 0
+                b: 0
+            - script.execute: error_beep

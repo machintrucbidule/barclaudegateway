@@ -41,18 +41,23 @@
 - Status: Triaged
 - Source: verification check (Phase 7, 2026-06-27 — ESP32 module not yet received)
 - Spec impact: none expected (confirm `docs/esphome-contract.md` against the real firmware behaviour)
-- Affected files / areas: ESP32/ESPHome firmware, `docs/esphome-contract.md`, `POST /v1/scan`
+- Affected files / areas: `firmware/esphome/barclaude-scanner.yaml`, `docs/esphome-contract.md`,
+  `POST /v1/scan`
 - Description: Phase 7 proved every `ScanResponse` state end-to-end against the real Chronodrive API
-  using direct HTTP calls, because the ESP32 + GM65/GM861 scanner had not arrived. The physical
+  using direct HTTP calls, because the ESP32 + GM861S scanner had not arrived. The physical
   half — a real barcode scan driving the LED + buzzer feedback off the `status` field — has not yet
   been observed on hardware.
-- Change to make: flash the ESPHome firmware per `docs/esphome-contract.md`, point it at the deployed
-  middleware, scan real products covering `added`, `added_to_lists_only`, and `not_found`, and
-  confirm the LED colour + buzzer pattern matches the contract for each state. Correct
-  `docs/esphome-contract.md` if the real firmware mapping differs.
-- Acceptance criteria: each of the three states, triggered by a physical scan, shows the documented
-  LED/buzzer feedback and the matching dashboard log entry; `docs/esphome-contract.md` reflects what
-  the firmware actually does.
+- Progress (2026-06-27): the ESPHome firmware is written and committed
+  (`firmware/esphome/barclaude-scanner.yaml`, ESP32-C6 Supermini + GM861S UART + external WS2812 +
+  active buzzer; sound only on failure) but **not yet validated on hardware** (module not received).
+- Change to make: flash `firmware/esphome/barclaude-scanner.yaml`, set the substitutions (WiFi,
+  `server_host`/`server_port`, pins), configure the GM861S per the file header (UART 9600 8N1, auto
+  output, CR/LF suffix, **good-read beep disabled**), then scan real products covering `added`,
+  `added_to_lists_only`, and `not_found`, and confirm the LED colour + buzzer matches for each state.
+  Correct the YAML / `docs/esphome-contract.md` if the real behaviour differs.
+- Acceptance criteria: each of the three states, triggered by a physical scan, shows the expected
+  LED colour (+ buzzer only on failure) and a matching dashboard log entry; the YAML and
+  `docs/esphome-contract.md` reflect what the firmware actually does.
 - Batch: BATCH-1
 - Dependencies: none (waiting on hardware)
 

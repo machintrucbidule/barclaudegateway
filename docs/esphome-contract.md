@@ -140,6 +140,11 @@ Per-destination outcome, useful for logging/diagnostics:
 
 ## ESPHome sketch (HTTP request + response parsing)
 
+> A complete, ready-to-flash configuration for an **ESP32-C6 Supermini + GM861S** (UART) with an
+> external WS2812 LED and an active buzzer (sound only on failure) lives at
+> [`firmware/esphome/barclaude-scanner.yaml`](../firmware/esphome/barclaude-scanner.yaml). The sketch
+> below is the minimal illustration.
+
 ```yaml
 # Minimal illustration — adapt pins/IDs to your board.
 http_request:
