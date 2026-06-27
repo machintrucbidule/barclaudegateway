@@ -96,6 +96,9 @@ export class ErrorMonitor {
       this.clear();
       return;
     }
+    // Lazy-mode idle skip (BL-006): no probe ran, so we learned nothing — leave any existing surface
+    // untouched (don't clear a real incident, don't invent one).
+    if (report.idle) return;
     if (report.ok) {
       this.clear();
       return;

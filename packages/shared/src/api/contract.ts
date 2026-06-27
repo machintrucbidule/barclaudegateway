@@ -32,6 +32,11 @@ export interface ApiConfig {
    * POSTs a secret-free alert there so the user is notified without watching the UI (CLARIFY-05).
    */
   haWebhookUrl: string;
+  /**
+   * Auth-token lifecycle policy (BL-006): `lazy` authenticates only when a scan needs it (fewer
+   * background calls); `keepalive` keeps the token warm with a ~2h refresh timer (snappier scans).
+   */
+  authMode: 'lazy' | 'keepalive';
 }
 
 /** `GET /api/config`: the editable params plus a write-only credentials indicator (never the password). */

@@ -4,8 +4,10 @@ import type { Dispatcher } from 'undici';
 import type { FastifyInstance } from 'fastify';
 import type { Product } from '@barclaudegateway/shared';
 import type { AppConfig } from '../config/defaults.js';
+import { CONFIG_KEYS } from '../config/defaults.js';
 import { HttpClient } from '../http/client.js';
 import { ChronodriveClient } from '../chronodrive/client.js';
+import { TokenLifecycle } from '../auth/lifecycle.js';
 import type { Database } from '../storage/db.js';
 import { openDatabase } from '../storage/db.js';
 import { ConfigStore } from '../storage/config.js';
@@ -34,6 +36,7 @@ const CONFIG: AppConfig = {
   siteMode: 'DRIVE',
   siteId: '',
   haWebhookUrl: '',
+  authMode: 'keepalive',
 };
 
 const pathIs =
@@ -77,6 +80,9 @@ describe('ingest server (fastify.inject)', () => {
     db = openDatabase(':memory:');
     const configStore = new ConfigStore(db);
     configStore.seedDefaults();
+    // These tests predate BL-006 and assert the connect-on-read /health behaviour → pin keep-alive
+    // (a fresh DB would otherwise seed `lazy` and gate /health into the idle state).
+    configStore.set(CONFIG_KEYS.authMode, 'keepalive');
     const destinations = new DestinationsStore(configStore);
     destinations.write({ cart: true, lists: [] });
     const scanLog = new ScanLog(db);
@@ -93,6 +99,16 @@ describe('ingest server (fastify.inject)', () => {
       getToken: async () => 'TOKEN',
       siteId: '1016',
     });
+    const auth = new TokenLifecycle({
+      http: quietClient(),
+      config: {
+        identityBaseUrl: CONFIG.identityBaseUrl,
+        clientId: CONFIG.clientId,
+        redirectUri: CONFIG.redirectUri,
+        scope: CONFIG.scope,
+      },
+      loadCredentials: async () => ({ email: 'e', password: 'p' }),
+    });
     const pipeline = new IngestPipeline({ chronodrive, scanLog, destinations, events, emit });
     const errorMonitor = new ErrorMonitor();
     const haWebhook = new HaWebhookNotifier({
@@ -101,6 +117,7 @@ describe('ingest server (fastify.inject)', () => {
     app = buildServer({
       pipeline,
       chronodrive,
+      auth,
       configStore,
       destinations,
       credentialStore,

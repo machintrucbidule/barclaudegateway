@@ -1,8 +1,8 @@
 # BarclaudeGateway — Project Context
 
 > **This file is read at the start of every development step.** Keep it up to date.
-> Last updated: 2026-06-27 (BATCH-1 — BL-001: ESP32 hardware validated; scanner firmware is LED-only +
-> Home-Assistant-integrated, DECISION-020. All phases + both deferred Phase-7 items now closed)
+> Last updated: 2026-06-28 (BATCH-5 — BL-006: configurable auth-token policy `auth_mode` lazy vs
+> keep-alive, DECISION-021. Fresh installs default to lazy; upgraded DBs stay keep-alive)
 
 ---
 
@@ -116,6 +116,12 @@ Auth flow (Reach5 PKCE) — **live-verified end-to-end by the middleware 2026-06
 - **Step 3** — `POST /oauth/token` (auth code exchange) → `access_token` (2h TTL)
 - **Silent refresh** (every ~2h): Steps 2+3 only, using `__Host-SESSION` cookie — no password needed. **Confirmed working live.**
 - **Full re-login** (every ~72h or on `login_required`): Steps 1+2+3 with stored credentials
+- **Token policy is configurable** (`auth_mode`, BL-006/DECISION-021): `keepalive` arms the ~2h silent
+  refresh + connects on the startup/6h self-test (above); `lazy` does neither — it logs in only when a
+  scan needs it and keeps the proactive self-test/health reads dormant while idle (no *live* token).
+  Fresh installs default to **lazy**; a DB upgraded from before BL-006 stays **keep-alive** until the
+  user switches it in the config UI. A manual `POST /api/health/connect` forces an on-demand
+  login + probe (the "connect / check now" buttons on the dashboard + config page).
 - All `/oauth/*` + `/identity` calls must carry `Origin: https://www.chronodrive.com` + `Referer: https://www.chronodrive.com/`
 - Per-service static API keys exist — if one key rotates, only that service breaks
 - `x-api-version` response header signals Chronodrive backend deploys (monitor this)
@@ -208,6 +214,7 @@ All Phase 0 architecture decisions and functional clarifications are resolved. S
 | End-to-end validation + hardening      | RESOLVED | Deployed smoke/security/resilience proven; central log redaction wired (DECISION-017, v0.0.3); maintenance loop initialized |
 | Operational event-logging + scan history | RESOLVED | Dedicated `EventLog`/`EventLogBus` + `event_log` table, `LogEvent` taxonomy, 50 000-row/10-y retention, SSE tail; scan page split into operational logs + searchable history (DECISION-018, BL-003/004) |
 | "Already in list" as a distinct scan state | RESOLVED | Not built — duplicate list-add is an idempotent `204` (already green `added`); documented (contract.md §5.8) and closed by investigation (DECISION-019, BL-005) |
+| Auth-token policy: lazy vs keep-alive          | RESOLVED | `auth_mode` config key; lazy = on-demand login only + dormant self-test while idle, keep-alive = ~2h refresh + proactive self-test; fresh→lazy, upgraded→keep-alive; manual `POST /api/health/connect` (DECISION-021, BL-006) |
 
 ---
 

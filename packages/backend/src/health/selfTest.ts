@@ -30,6 +30,12 @@ export interface HealthSelfTestOptions {
    * brand-new install never reports a (non-existent) breakage.
    */
   isConfigured?: () => boolean;
+  /**
+   * Lazy-mode gate (BL-006): when provided and it returns `false`, the self-test is skipped entirely
+   * (no connection attempted) and the report carries `idle: true`. Mirrors {@link isConfigured}, but
+   * for the "no live session, don't force a login" case. Omitted in keep-alive mode (always runs).
+   */
+  hasSession?: () => boolean;
   /** Injectable clock for deterministic tests. */
   now?: () => number;
 }
@@ -48,6 +54,18 @@ export async function runHealthSelfTest(
   // Nothing configured yet → do NOT try to connect. This is an informational state, not a failure.
   if (options.isConfigured && !options.isConfigured()) {
     return { ok: false, configured: false, checks: [], apiVersions: {}, checkedAt: now() };
+  }
+
+  // Lazy mode with no live session → stay dormant: skip the probe (no forced login), report idle.
+  if (options.hasSession && !options.hasSession()) {
+    return {
+      ok: false,
+      configured: true,
+      idle: true,
+      checks: [],
+      apiVersions: {},
+      checkedAt: now(),
+    };
   }
 
   const checks: EndpointCheck[] = [];

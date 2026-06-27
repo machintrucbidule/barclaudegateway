@@ -6,7 +6,59 @@
 >
 > Newest entries on top. Nothing here is active work — the active backlog is [`BACKLOG.md`](./BACKLOG.md).
 >
-> Last updated: 2026-06-27 (BATCH-1 — BL-001 ESP32 hardware validation shipped; backlog now empty)
+> Last updated: 2026-06-28 (BATCH-5 — BL-006 configurable auth-token policy shipped; backlog now empty)
+
+---
+
+## BATCH-5 — Configurable auth-token policy (P1) — shipped 2026-06-28
+
+> Developed via loop prompt 2 on branch `feature/batch-5-auth-token-policy`. Adds an `auth_mode`
+> setting (on-demand **lazy** vs **keep-alive**) so the gateway authenticates only when a scan needs
+> it. Recorded as **DECISION-021**. Middleware + UI change; `contract.md` unchanged.
+
+### [BL-006] Add a setting to choose the auth-token policy: on-demand (lazy) vs keep-alive
+
+- Type: Evolution · Priority: P1 · Batch: BATCH-5 · Source: user remark (2026-06-28)
+- **Date shipped**: 2026-06-28
+- **What was actually done**:
+  - **Config key `auth_mode`** (`lazy` | `keepalive`) added to `AppConfig`/`ApiConfig` and the
+    `config` table (`packages/backend/src/config/defaults.ts`, `packages/shared/src/api/contract.ts`).
+    `DEFAULT_APP_CONFIG.authMode = 'lazy'` (fresh installs); `appConfigFromMap` resolves a missing /
+    invalid value to `keepalive`.
+  - **Dev-gate against flipping prod** (`packages/backend/src/storage/config.ts`): `seedDefaults()`
+    now detects a fresh DB (empty `config` table) and seeds `auth_mode` **only** then — an upgraded DB
+    keeps the key absent (→ `keepalive`), so an `INSERT OR IGNORE` can't silently switch an existing
+    deployment to `lazy`.
+  - **Refresh timer gated on keep-alive** (`packages/backend/src/auth/lifecycle.ts`): new `keepAlive`
+    dep (default `true`); `scheduleRefresh` runs only when `keepAlive`. Added `hasLiveSession()`
+    (non-expired token). `bootstrap.ts` passes `keepAlive: config.authMode === 'keepalive'`.
+  - **Self-test dormant while idle in lazy** (`selfTest.ts` + `main.ts`): new `hasSession?` option →
+    when lazy and no live session, the self-test is skipped (no forced login) and the report carries
+    `idle: true` (new `HealthReport.idle` field); `main.ts` emits a "Health self-test skipped (lazy,
+    idle)" log. `errorMonitor` treats an idle report as informational (no surface change).
+  - **API** (`apiRoutes.ts` + `server.ts`): `authMode` round-trips through GET/PUT `/api/config`
+    (invalid value → 400); `GET /api/health` and the top-level `/health` apply the lazy/idle gate (no
+    auto-connect); new **`POST /api/health/connect`** forces an on-demand login + full probe. `auth`
+    threaded into `ApiDeps`.
+  - **UI**: config page "Gestion de la connexion" `SegmentedControl` + plain-French trade-off
+    explanation + "Vérifier la connexion maintenant" button; dashboard shows an "En veille (mode
+    économique)" card with a "Se connecter / vérifier maintenant" button when idle
+    (`ConfigPage.tsx`, `DashboardPage.tsx`, `api/client.ts` `connectNow`).
+  - **Tests** added/updated (all green: 170 backend + 19 frontend): lazy never arms the timer +
+    `hasLiveSession`; self-test idle gate; fresh→lazy / upgraded→keepalive seed (+ no auto-insert) +
+    invalid→keepalive; `authMode` round-trip + 400; `/api/health` idle + `/api/health/connect` probe;
+    ConfigPage mode switch + connect; DashboardPage idle card + connect.
+  - **Docs/specs**: DECISION-021 (`decisions.md`), `PROJECT_CONTEXT.md` (auth-flow modes + decision
+    table + header), `docs/deployment.md` (connection-mode section). `contract.md` unchanged.
+- **Acceptance criteria — met**:
+  - Fresh install defaults to lazy; an upgraded DB with no `auth_mode` keeps keep-alive until switched
+    in the UI (covered by `config.test.ts`).
+  - Lazy: no login at startup; a scan triggers an on-demand login; no refresh timer armed; the
+    startup/6h self-test is skipped while idle with the "skipped (lazy, idle)" log.
+  - Keep-alive: behaviour unchanged (refresh timer + startup/6h self-test).
+  - The setting round-trips through GET/PUT `/api/config` and the config page; an invalid value is
+    rejected; DECISION-021 + PROJECT_CONTEXT.md updated.
+- **Commit/PR**: branch `feature/batch-5-auth-token-policy` (loop prompt 2, 2026-06-28).
 
 ---
 

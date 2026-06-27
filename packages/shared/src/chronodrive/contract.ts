@@ -221,6 +221,12 @@ export interface HealthReport {
    * Absent/true means credentials are present and the checks ran.
    */
   configured?: boolean;
+  /**
+   * `true` when the self-test was skipped because the auth policy is `lazy` and there is no live
+   * session (BL-006) — no connection was attempted; an informational "dormant while idle" state, not
+   * a failure. Absent in keep-alive mode and whenever the checks actually ran.
+   */
+  idle?: boolean;
   siteId?: string;
   checks: EndpointCheck[];
   apiVersions: XApiVersions;

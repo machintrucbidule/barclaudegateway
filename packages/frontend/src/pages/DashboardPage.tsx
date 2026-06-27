@@ -4,6 +4,7 @@ import {
   Alert,
   Anchor,
   Badge,
+  Button,
   Card,
   Group,
   Loader,
@@ -30,6 +31,42 @@ function NotConfiguredCard(): JSX.Element {
         page Configuration
       </Anchor>{' '}
       pour saisir votre e-mail et votre mot de passe Chronodrive.
+    </Alert>
+  );
+}
+
+/**
+ * Lazy mode, no live session (BL-006): the passive health read stayed dormant on purpose. Offer a
+ * manual connect rather than silently forcing a login on every dashboard view.
+ */
+function IdleCard({ onConnected }: { onConnected: (report: HealthReport) => void }): JSX.Element {
+  const [connecting, setConnecting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const connect = async (): Promise<void> => {
+    setConnecting(true);
+    setError(null);
+    try {
+      onConnected(await api.connectNow());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Connexion impossible');
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  return (
+    <Alert color="gray" title="En veille (mode économique)">
+      <Stack align="flex-start">
+        <Text size="sm">
+          La connexion à Chronodrive n&apos;est établie qu&apos;à la demande. Aucun contrôle
+          d&apos;état n&apos;est effectué tant que vous ne lancez pas un scan ou une vérification.
+        </Text>
+        {error && <Alert color="red">{error}</Alert>}
+        <Button onClick={() => void connect()} loading={connecting}>
+          Se connecter / vérifier maintenant
+        </Button>
+      </Stack>
     </Alert>
   );
 }
@@ -168,6 +205,8 @@ export function DashboardPage(): JSX.Element {
       {health ? (
         health.configured === false ? (
           <NotConfiguredCard />
+        ) : health.idle ? (
+          <IdleCard onConnected={setHealth} />
         ) : (
           <HealthCard health={health} />
         )

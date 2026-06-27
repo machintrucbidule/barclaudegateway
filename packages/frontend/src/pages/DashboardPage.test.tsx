@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { screen } from '@testing-library/react';
+import { fireEvent, screen } from '@testing-library/react';
 import type { HealthReport, ScansResponse } from '@barclaudegateway/shared';
 import { DashboardPage } from './DashboardPage.js';
 import { mockFetch } from '../test/fetchMock.js';
@@ -77,5 +77,32 @@ describe('DashboardPage', () => {
     );
     // The degraded health badge must NOT be shown.
     expect(screen.queryByText('Dégradé')).not.toBeInTheDocument();
+  });
+
+  it('lazy idle: shows the dormant card and connects on demand (BL-006)', async () => {
+    const IDLE: HealthReport = {
+      ok: false,
+      configured: true,
+      idle: true,
+      checks: [],
+      apiVersions: {},
+      checkedAt: 0,
+    };
+    mockFetch((url, method) => {
+      if (url.includes('/api/health/connect')) return { body: HEALTH };
+      if (method === 'GET' && url.includes('/api/health')) return { body: IDLE };
+      if (url.includes('/api/scans')) return { body: SCANS };
+      return { body: {} };
+    });
+
+    renderWithProviders(<DashboardPage />);
+
+    // Dormant (idle) card, not a degraded error.
+    expect(await screen.findByText('En veille (mode économique)')).toBeInTheDocument();
+    expect(screen.queryByText('Dégradé')).not.toBeInTheDocument();
+
+    // Clicking the connect button forces a probe and swaps in the live health report.
+    fireEvent.click(screen.getByRole('button', { name: 'Se connecter / vérifier maintenant' }));
+    expect(await screen.findByText('Opérationnel')).toBeInTheDocument();
   });
 });

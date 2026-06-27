@@ -24,6 +24,7 @@ import type {
 import type { ChronodriveClient } from '../chronodrive/client.js';
 import type { AppConfig } from '../config/defaults.js';
 import { appConfigToEntries } from '../config/defaults.js';
+import type { TokenLifecycle } from '../auth/lifecycle.js';
 import { runHealthSelfTest } from '../health/selfTest.js';
 import { ChronodriveError } from './errors.js';
 import type { ConfigStore } from '../storage/config.js';
@@ -39,6 +40,8 @@ import type { HaWebhookNotifier } from '../health/haWebhook.js';
 
 export interface ApiDeps {
   chronodrive: ChronodriveClient;
+  /** BL-006: the token lifecycle, for the lazy-mode health gate + manual on-demand connect. */
+  auth: TokenLifecycle;
   configStore: ConfigStore;
   destinations: DestinationsStore;
   credentialStore: CredentialStore;
@@ -112,6 +115,7 @@ function toApiConfig(config: AppConfig): ApiConfig {
     siteMode: config.siteMode,
     siteId: config.siteId,
     haWebhookUrl: config.haWebhookUrl,
+    authMode: config.authMode,
   };
 }
 
@@ -145,6 +149,10 @@ function parseConfigBody(
   // haWebhookUrl is optional: empty string (disabled) OR a valid http(s) URL.
   if (b.haWebhookUrl !== undefined && b.haWebhookUrl !== '' && !isHttpUrl(b.haWebhookUrl))
     return { ok: false, error: 'haWebhookUrl must be empty or an http(s) URL' };
+  // authMode is optional in the body (older clients omit it): default to keep-alive when absent, but
+  // reject any value that is neither 'lazy' nor 'keepalive'.
+  if (b.authMode !== undefined && b.authMode !== 'lazy' && b.authMode !== 'keepalive')
+    return { ok: false, error: "authMode must be 'lazy' or 'keepalive'" };
 
   return {
     ok: true,
@@ -163,6 +171,8 @@ function parseConfigBody(
       siteMode: b.siteMode,
       siteId: typeof b.siteId === 'string' ? b.siteId : '',
       haWebhookUrl: typeof b.haWebhookUrl === 'string' ? b.haWebhookUrl : '',
+      // Absent → keep-alive (the safe default; the UI always sends the field explicitly).
+      authMode: b.authMode === 'lazy' ? 'lazy' : 'keepalive',
     },
   };
 }
@@ -201,9 +211,22 @@ export const apiRoutes: FastifyPluginAsync<{ deps: ApiDeps }> = (app, opts) => {
   });
 
   // ---- Health -------------------------------------------------------------------------------
-  // Skip the probe entirely (no connection attempt) until credentials are saved; the dashboard then
-  // shows an informational "not configured yet" message instead of a degraded/error state.
-  app.get('/health', async () =>
+  // Passive read. Skip the probe entirely (no connection attempt) until credentials are saved; the
+  // dashboard then shows an informational "not configured yet" message. In lazy mode (BL-006) it is
+  // additionally gated on a live session, so merely viewing the dashboard never forces a login — the
+  // dashboard renders an "idle" card with a manual connect button instead.
+  app.get('/health', async () => {
+    const lazy = deps.configStore.readAppConfig().authMode === 'lazy';
+    return runHealthSelfTest(deps.chronodrive, {
+      isConfigured: () => deps.credentialStore.has(),
+      ...(lazy ? { hasSession: () => deps.auth.hasLiveSession() } : {}),
+    });
+  });
+
+  // User-initiated connect (BL-006): force an on-demand login (the first check resolves the token) and
+  // return a full health report. No `hasSession` gate — the user explicitly asked to connect. Powers
+  // the "Vérifier la connexion maintenant" buttons on the dashboard + config page.
+  app.post('/health/connect', async () =>
     runHealthSelfTest(deps.chronodrive, { isConfigured: () => deps.credentialStore.has() }),
   );
 

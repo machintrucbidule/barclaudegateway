@@ -81,6 +81,19 @@ moves (relevant when `BCG_TAG=latest`).
 "not configured yet" message (not an error) and the app makes no upstream calls — this is expected
 (DECISION-016, v0.0.2+). Enter your credentials on the Config page to bring it online.
 
+**Connection mode (`auth_mode`, BL-006):** the Config page → "Gestion de la connexion" lets you pick
+how the gateway talks to Chronodrive:
+
+- **À la demande (lazy)** — connects only when a scan needs it; fewer background calls, but the first
+  scan after a quiet period is a little slower and automatic breakage detection is dormant while idle.
+  Use the **"Vérifier la connexion maintenant"** button (Config page or dashboard) to check on demand.
+- **Connexion maintenue (keep-alive)** — keeps the session warm (refresh ≈ every 2h) and checks health
+  proactively. Snappier scans, regular API calls.
+
+A **brand-new install defaults to lazy.** An **existing deployment upgraded** to this version keeps its
+current **keep-alive** behaviour until you switch it in the UI (the setting is not auto-applied to an
+already-initialised database).
+
 ## Deploy with plain Docker Compose
 
 ```sh

@@ -9,9 +9,9 @@
 > [ops/grooming](./prompts/loop-3-ops-grooming.md). Schema and process: [`ROADMAP.md`](./ROADMAP.md) §
 > "Iterative maintenance loop".
 >
-> Last updated: 2026-06-27 (**BATCH-1** [BL-001] shipped → archived: ESP32 hardware validated, LED-only
-> firmware, DECISION-020. **Backlog empty** — all build phases + both deferred Phase-7 items closed.
-> Run loop prompt 1 to add new remarks.)
+> Last updated: 2026-06-28 (**BATCH-5** [BL-006] shipped — configurable auth-token policy (lazy vs
+> keep-alive); moved to `BACKLOG_ARCHIVE.md`. **No actionable batch remains** — run loop prompt 1 to
+> add new remarks.)
 
 ---
 
@@ -34,6 +34,7 @@
 
 ---
 
-_No active backlog items._ All build phases (0–7) and both deferred Phase-7 items (BL-001, BL-002) are
-closed; shipped work lives in [`BACKLOG_ARCHIVE.md`](./BACKLOG_ARCHIVE.md). Add new remarks via loop
-prompt 1.
+## (No actionable batch)
+
+The active backlog is empty. Run [loop prompt 1](./prompts/loop-1-intake-triage.md) to capture and
+triage new remarks into a batch, then [loop prompt 2](./prompts/loop-2-develop-batch.md) to develop it.

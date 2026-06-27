@@ -8,6 +8,7 @@ import {
   Group,
   Loader,
   PasswordInput,
+  SegmentedControl,
   Stack,
   Text,
   TextInput,
@@ -36,6 +37,7 @@ function apiConfigOf(config: ConfigResponse): ApiConfig {
     siteMode: config.siteMode,
     siteId: config.siteId,
     haWebhookUrl: config.haWebhookUrl,
+    authMode: config.authMode,
   };
 }
 
@@ -434,12 +436,137 @@ function NotificationsSection(): JSX.Element {
   );
 }
 
+/** BL-006: choose the auth-token policy (lazy vs keep-alive) + a manual "connect now" probe. */
+function ConnectionModeSection(): JSX.Element {
+  const [config, setConfig] = useState<ApiConfig | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [checkResult, setCheckResult] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const fresh = await api.getConfig();
+        if (active) setConfig(apiConfigOf(fresh));
+      } catch (e) {
+        if (active) setError(e instanceof Error ? e.message : 'Chargement impossible');
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  if (error && !config) return <Alert color="red">{error}</Alert>;
+  if (!config) return <Loader />;
+
+  const save = async (): Promise<void> => {
+    setSaving(true);
+    setError(null);
+    try {
+      await api.putConfig(config);
+      setSaved(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Enregistrement impossible');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const checkNow = async (): Promise<void> => {
+    setChecking(true);
+    setCheckResult(null);
+    try {
+      const report = await api.connectNow();
+      if (report.configured === false) {
+        setCheckResult({ ok: false, text: 'Identifiants Chronodrive non renseignés.' });
+      } else if (report.ok) {
+        const okCount = report.checks.filter((c) => c.status === 'ok').length;
+        setCheckResult({ ok: true, text: `Connexion réussie (${okCount} vérification(s) OK).` });
+      } else {
+        const failing = report.checks.find((c) => c.status === 'error');
+        setCheckResult({
+          ok: false,
+          text: `Connexion en échec${failing ? ` : ${failing.name} (${failing.detail})` : ''}.`,
+        });
+      }
+    } catch (e) {
+      setCheckResult({ ok: false, text: e instanceof Error ? e.message : 'Connexion impossible' });
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  return (
+    <Card withBorder>
+      <Stack>
+        <Title order={4}>Gestion de la connexion</Title>
+        <Text size="sm" c="dimmed">
+          Choisissez quand la passerelle se connecte à Chronodrive.
+        </Text>
+        <SegmentedControl
+          value={config.authMode}
+          onChange={(value) => {
+            setSaved(false);
+            setConfig((prev) =>
+              prev ? { ...prev, authMode: value as ApiConfig['authMode'] } : prev,
+            );
+          }}
+          data={[
+            { label: 'À la demande (économique)', value: 'lazy' },
+            { label: 'Connexion maintenue', value: 'keepalive' },
+          ]}
+        />
+        <Text size="xs" c="dimmed">
+          {config.authMode === 'lazy' ? (
+            <>
+              <b>À la demande</b> : la passerelle ne se connecte que lorsqu&apos;un scan le
+              nécessite. Moins d&apos;appels en arrière-plan, mais le premier scan après une période
+              d&apos;inactivité est un peu plus lent et la détection automatique de panne est en
+              veille tant qu&apos;aucun scan n&apos;a lieu.
+            </>
+          ) : (
+            <>
+              <b>Connexion maintenue</b> : la passerelle garde la session active en arrière-plan
+              (rafraîchissement ≈ toutes les 2&nbsp;h) et vérifie l&apos;état régulièrement. Scans
+              réactifs, mais des appels réguliers à l&apos;API Chronodrive.
+            </>
+          )}
+        </Text>
+        {error && <Alert color="red">{error}</Alert>}
+        <Group>
+          <Button onClick={() => void save()} loading={saving}>
+            Enregistrer le mode de connexion
+          </Button>
+          <Button variant="default" onClick={() => void checkNow()} loading={checking}>
+            Vérifier la connexion maintenant
+          </Button>
+          {saved && (
+            <Text c="green" size="sm">
+              Enregistré.
+            </Text>
+          )}
+        </Group>
+        {checkResult && (
+          <Text c={checkResult.ok ? 'green' : 'red'} size="sm">
+            {checkResult.text}
+          </Text>
+        )}
+      </Stack>
+    </Card>
+  );
+}
+
 export function ConfigPage(): JSX.Element {
   return (
     <Stack maw={640}>
       <Title order={2}>Configuration</Title>
       <DestinationsSection />
       <CredentialsSection />
+      <ConnectionModeSection />
       <ApiParamsSection />
       <NotificationsSection />
     </Stack>

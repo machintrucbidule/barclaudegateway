@@ -18,6 +18,7 @@ const CONFIG: AppConfig = {
   siteMode: 'DRIVE',
   siteId: '',
   haWebhookUrl: '',
+  authMode: 'keepalive',
 };
 
 const pathIs =
@@ -159,6 +160,59 @@ describe('runHealthSelfTest', () => {
       apiVersions: {},
       checkedAt: 7,
     });
+  });
+
+  it('skips with idle:true (no connection) when lazy and no live session (BL-006)', async () => {
+    // No interceptors registered: if it tried to connect, disableNetConnect would fail the test.
+    const report = await runHealthSelfTest(client(), {
+      isConfigured: () => true,
+      hasSession: () => false,
+      now: () => 9,
+    });
+    expect(report).toEqual({
+      ok: false,
+      configured: true,
+      idle: true,
+      checks: [],
+      apiVersions: {},
+      checkedAt: 9,
+    });
+  });
+
+  it('runs normally when a live session exists (hasSession true)', async () => {
+    pool
+      .intercept({ path: '/v1/customers/me', method: 'GET' })
+      .reply(200, { lastVisitedSite: { id: 1016 } });
+    pool.intercept({ path: pathIs('/v1/search-suggestions'), method: 'GET' }).reply(200, {
+      keywords: [HEALTH_CHECK_EAN],
+      products: [
+        { id: '1', labels: { productLabel: 'Sel' }, eans: [HEALTH_CHECK_EAN], isEligible: true },
+      ],
+      categories: [],
+    });
+    pool
+      .intercept({ path: pathIs('/v1/customers/me/carts'), method: 'GET' })
+      .reply(200, { content: [{ id: 'c', items: [], isOrdered: false }] });
+    pool.intercept({ path: pathIs('/v1/shopping-lists'), method: 'GET' }).reply(200, {
+      content: [],
+      page: {
+        size: 0,
+        totalElements: 0,
+        totalPages: 0,
+        number: 1,
+        hasNext: false,
+        hasPrevious: false,
+        isEmpty: true,
+      },
+    });
+
+    const report = await runHealthSelfTest(client(), {
+      isConfigured: () => true,
+      hasSession: () => true,
+    });
+    expect(report.idle).toBeUndefined();
+    expect(report.ok).toBe(true);
+    expect(report.checks).toHaveLength(4);
   });
 
   it('reports an error check when the token/auth fails (401)', async () => {

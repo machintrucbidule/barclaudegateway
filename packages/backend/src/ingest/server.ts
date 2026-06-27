@@ -94,6 +94,7 @@ export function buildServer(deps: ServerDeps, options: ServerOptions = {}): Fast
     prefix: '/api',
     deps: {
       chronodrive: deps.chronodrive,
+      auth: deps.auth,
       configStore: deps.configStore,
       destinations: deps.destinations,
       credentialStore: deps.credentialStore,
@@ -127,11 +128,15 @@ export function buildServer(deps: ServerDeps, options: ServerOptions = {}): Fast
   });
 
   app.get('/health', async (_request, reply) => {
+    // Same passive policy as GET /api/health: in lazy mode, gate on a live session so this readiness
+    // probe never forces a login while idle (BL-006).
+    const lazy = deps.configStore.readAppConfig().authMode === 'lazy';
     const report = await runHealthSelfTest(deps.chronodrive, {
       isConfigured: () => deps.credentialStore.has(),
+      ...(lazy ? { hasSession: () => deps.auth.hasLiveSession() } : {}),
     });
-    // 503 only on a real failure. "Not configured yet" is informational, so report it as 200.
-    const healthy = report.ok || report.configured === false;
+    // 503 only on a real failure. "Not configured" and lazy-"idle" are informational → 200.
+    const healthy = report.ok || report.configured === false || report.idle === true;
     reply.code(healthy ? 200 : 503).send(report);
   });
 

@@ -16,6 +16,7 @@ const CONFIG: ConfigResponse = {
   siteMode: 'DRIVE',
   siteId: '',
   haWebhookUrl: '',
+  authMode: 'lazy',
   credentials: { set: false },
 };
 
@@ -43,6 +44,16 @@ function install(): { calls: MockCall[] } {
     }
     if (url.includes('/api/credentials')) return { body: { credentials: { set: true } } };
     if (url.includes('/api/notify/test')) return { body: { ok: true, status: 200 } };
+    if (url.includes('/api/health/connect'))
+      return {
+        body: {
+          ok: true,
+          configured: true,
+          checks: [{ name: 'Profil', endpoint: 'GET /customers/me', status: 'ok', detail: 'ok' }],
+          apiVersions: {},
+          checkedAt: 0,
+        },
+      };
     if (url.includes('/api/config')) return method === 'PUT' ? { body } : { body: CONFIG };
     return { body: {} };
   });
@@ -117,5 +128,38 @@ describe('ConfigPage', () => {
       );
     });
     expect(await screen.findByText(/Home Assistant a bien reçu/)).toBeInTheDocument();
+  });
+
+  it('switches the auth-token policy and PUTs the new authMode (BL-006)', async () => {
+    const { calls } = install();
+    renderWithProviders(<ConfigPage />);
+
+    // The connection-mode control renders with the served value (lazy) selected.
+    expect(await screen.findByText('Gestion de la connexion')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Connexion maintenue'));
+    fireEvent.click(screen.getByRole('button', { name: 'Enregistrer le mode de connexion' }));
+
+    await waitFor(() => {
+      const put = calls.find(
+        (c) =>
+          c.method === 'PUT' && c.url.includes('/api/config') && !c.url.includes('destinations'),
+      );
+      expect(put?.body).toMatchObject({ authMode: 'keepalive' });
+    });
+  });
+
+  it('runs an on-demand connection check (BL-006)', async () => {
+    const { calls } = install();
+    renderWithProviders(<ConfigPage />);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Vérifier la connexion maintenant' }),
+    );
+
+    await waitFor(() => {
+      expect(calls.some((c) => c.method === 'POST' && c.url.includes('/api/health/connect'))).toBe(
+        true,
+      );
+    });
   });
 });

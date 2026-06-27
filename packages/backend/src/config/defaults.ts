@@ -35,6 +35,17 @@ export interface AppConfig {
    * API error POSTs a secret-free alert there. Edited in the config UI like the other static params.
    */
   haWebhookUrl: string;
+  /**
+   * Auth-token lifecycle policy (BL-006, DECISION-021):
+   *  - `keepalive`: a background timer refreshes the token ~60s before `exp` (≈ every 2h) and the
+   *    startup + 6h self-test connect proactively. Snappy scans, regular background calls.
+   *  - `lazy`: no refresh timer and no forced login at startup; the app authenticates only when a scan
+   *    needs it, and the passive self-test/health reads are skipped while idle. Fewer background calls,
+   *    slower first scan after idle, breakage detection dormant while idle.
+   * Fresh installs default to `lazy`; a database upgraded from before BL-006 (no `auth_mode` row)
+   * resolves to `keepalive` so existing deployments keep today's behaviour until switched in the UI.
+   */
+  authMode: 'lazy' | 'keepalive';
 }
 
 /** Config-table column keys (one row per key). Kept as constants to avoid typos. */
@@ -51,6 +62,7 @@ export const CONFIG_KEYS = {
   siteMode: 'site_mode',
   siteId: 'site_id',
   haWebhookUrl: 'ha_webhook_url',
+  authMode: 'auth_mode',
 } as const;
 
 /** Known-good seed values, verified 2026-06-26 (contract.md §2.1, §3.1, §4). */
@@ -69,6 +81,8 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   siteMode: 'DRIVE',
   siteId: '',
   haWebhookUrl: '',
+  // Fresh installs default to the on-demand (lazy) policy — minimal background calls (BL-006).
+  authMode: 'lazy',
 };
 
 /** Flatten an {@link AppConfig} into config-table `[key, value]` rows. */
@@ -86,7 +100,13 @@ export function appConfigToEntries(config: AppConfig): Array<[string, string]> {
     [CONFIG_KEYS.siteMode, config.siteMode],
     [CONFIG_KEYS.siteId, config.siteId],
     [CONFIG_KEYS.haWebhookUrl, config.haWebhookUrl],
+    [CONFIG_KEYS.authMode, config.authMode],
   ];
+}
+
+/** Coerce a stored `auth_mode` value to the enum, defaulting to `keepalive` (missing/invalid). */
+function toAuthMode(value: string | undefined): AppConfig['authMode'] {
+  return value === 'lazy' || value === 'keepalive' ? value : 'keepalive';
 }
 
 /** Rebuild an {@link AppConfig} from a `key → value` map, throwing if a required key is missing. */
@@ -113,5 +133,9 @@ export function appConfigFromMap(map: ReadonlyMap<string, string>): AppConfig {
     siteId: map.get(CONFIG_KEYS.siteId) ?? '',
     // Optional: absent on databases seeded before Phase 5, and empty by default → no HA alert.
     haWebhookUrl: map.get(CONFIG_KEYS.haWebhookUrl) ?? '',
+    // Optional: absent on databases seeded before BL-006 → keep today's keep-alive behaviour. A fresh
+    // install seeds `lazy` explicitly (see ConfigStore.seedDefaults), so "missing" only ever means an
+    // upgraded DB, never a new one.
+    authMode: toAuthMode(map.get(CONFIG_KEYS.authMode)),
   };
 }

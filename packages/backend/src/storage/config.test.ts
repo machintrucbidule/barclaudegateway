@@ -52,6 +52,47 @@ describe('ConfigStore', () => {
     expect(store.readAppConfig().haWebhookUrl).toBe('https://ha.local/api/webhook/abc');
   });
 
+  it('seeds a fresh database to lazy auth mode (BL-006)', () => {
+    store.seedDefaults();
+    expect(store.get(CONFIG_KEYS.authMode)).toBe('lazy');
+    expect(store.readAppConfig().authMode).toBe('lazy');
+  });
+
+  it('does not seed auth_mode into an upgraded database, resolving it to keepalive (BL-006)', () => {
+    // Simulate a pre-BL-006 database: seed every key EXCEPT auth_mode, so the table is non-empty.
+    for (const [key, value] of Object.entries({
+      [CONFIG_KEYS.clientId]: 'C',
+      [CONFIG_KEYS.redirectUri]: 'https://r',
+      [CONFIG_KEYS.scope]: 'openid',
+      [CONFIG_KEYS.identityBaseUrl]: 'https://id',
+      [CONFIG_KEYS.apiBaseUrl]: 'https://api',
+      [CONFIG_KEYS.apiKeySearch]: 'S',
+      [CONFIG_KEYS.apiKeyCustomerCartRead]: 'C',
+      [CONFIG_KEYS.apiKeyCartWrite]: 'W',
+      [CONFIG_KEYS.apiKeyShoppingLists]: 'L',
+      [CONFIG_KEYS.siteMode]: 'DRIVE',
+      [CONFIG_KEYS.siteId]: '',
+      [CONFIG_KEYS.haWebhookUrl]: '',
+    })) {
+      store.set(key, value);
+    }
+    store.seedDefaults(); // simulate the upgrade boot
+    // The seed must NOT have inserted auth_mode (which would flip prod to lazy)…
+    expect(store.get(CONFIG_KEYS.authMode)).toBeUndefined();
+    // …and the missing key resolves to keep-alive (today's behaviour).
+    expect(store.readAppConfig().authMode).toBe('keepalive');
+  });
+
+  it('round-trips auth_mode and coerces an invalid value to keepalive (BL-006)', () => {
+    store.seedDefaults();
+    store.set(CONFIG_KEYS.authMode, 'keepalive');
+    expect(store.readAppConfig().authMode).toBe('keepalive');
+    store.set(CONFIG_KEYS.authMode, 'lazy');
+    expect(store.readAppConfig().authMode).toBe('lazy');
+    store.set(CONFIG_KEYS.authMode, 'bogus');
+    expect(store.readAppConfig().authMode).toBe('keepalive');
+  });
+
   it('treats a pre-Phase-5 database (no ha_webhook_url row) as an empty URL', () => {
     // Seed every key except the new one, mimicking a database created before Phase 5.
     for (const [key, value] of Object.entries({

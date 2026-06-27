@@ -70,6 +70,8 @@ export function createServices(env: EnvConfig, options: CreateServicesOptions = 
     config: authConfig,
     loadCredentials: createCredentialsLoader(credentialStore),
     emit,
+    // BL-006: only keep-alive arms the background refresh timer; lazy refreshes purely on demand.
+    keepAlive: config.authMode === 'keepalive',
   });
 
   const chronodrive = new ChronodriveClient({

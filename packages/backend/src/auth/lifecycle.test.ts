@@ -206,4 +206,68 @@ describe('TokenLifecycle (mocked transport)', () => {
       vi.useRealTimers();
     }
   });
+
+  it('lazy mode (keepAlive:false) never arms the refresh timer (BL-006)', async () => {
+    vi.useFakeTimers();
+    try {
+      let tokenCalls = 0;
+      const pool = mockAgent.get(IDENTITY);
+      pool
+        .intercept({ path: '/identity/v1/password/login', method: 'POST' })
+        .reply(200, { tkn: 'TKN' })
+        .persist();
+      pool
+        .intercept({ path: authorizePath, method: 'GET' })
+        .reply(200, AUTHORIZE_HTML, {
+          headers: { 'content-type': 'text/html', 'set-cookie': SESSION_COOKIES },
+        })
+        .persist();
+      pool
+        .intercept({ path: '/oauth/token', method: 'POST' })
+        .reply(200, () => {
+          tokenCalls += 1;
+          return {
+            access_token: makeJwt(Math.floor(Date.now() / 1000) + 7200),
+            id_token: 'ID',
+            expires_in: 7200,
+            token_type: 'Bearer',
+          };
+        })
+        .persist();
+
+      const lc = new TokenLifecycle({
+        http: lifecycleClient(),
+        config: CONFIG,
+        loadCredentials: async () => CREDS,
+        keepAlive: false,
+      });
+      await lc.start(); // on-demand login still happens…
+      expect(tokenCalls).toBe(1);
+
+      // …but no background timer is armed, so fast-forwarding past exp does NOT refresh.
+      await vi.advanceTimersByTimeAsync(7200_000 * 2);
+      expect(tokenCalls).toBe(1);
+      lc.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('TokenLifecycle.hasLiveSession', () => {
+  it('is false with no session and true while the access token is unexpired', () => {
+    const store = new SessionStore();
+    const lc = new TokenLifecycle({
+      http: lifecycleClient(),
+      config: CONFIG,
+      loadCredentials: async () => CREDS,
+      store,
+      now: () => 0,
+    });
+    expect(lc.hasLiveSession()).toBe(false); // no session yet
+    store.set({ accessToken: 't', idToken: 'i', expiresAtMs: 1_000_000, cookieHeader: 'c' });
+    expect(lc.hasLiveSession()).toBe(true); // unexpired
+    store.set({ accessToken: 't', idToken: 'i', expiresAtMs: 0, cookieHeader: 'c' });
+    expect(lc.hasLiveSession()).toBe(false); // expired (past exp − skew)
+  });
 });

@@ -23,6 +23,7 @@ const CONFIG: AppConfig = {
   siteMode: 'DRIVE',
   siteId: '',
   haWebhookUrl: '',
+  authMode: 'keepalive',
 };
 
 const pathIs =

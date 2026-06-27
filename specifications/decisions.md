@@ -578,6 +578,44 @@
 
 ---
 
+### [DECISION-021] Configurable auth-token policy: on-demand (lazy) vs keep-alive (BATCH-5 / BL-006)
+
+- **Date**: 2026-06-28
+- **Question**: the token was always kept warm by a background refresh timer (~every 2h) plus a
+  startup + 6h health self-test that forces a login. The user wanted to be able to switch to an
+  on-demand policy that authenticates **only when a scan needs it**, to minimise background calls to
+  the private Chronodrive API.
+- **Decision** (user): add an `auth_mode` setting with two values, chosen in the config UI:
+  - **`lazy`** — no background refresh timer; no forced login at startup; the proactive self-test
+    (startup + 6h) and the passive health reads (`GET /health`, `GET /api/health`) are **skipped while
+    idle** (no *live* session). A scan still triggers an on-demand login. Trade-off, accepted:
+    automatic breakage detection is dormant while idle, and the first scan after idle is slower.
+  - **`keepalive`** — today's behaviour unchanged (2h refresh timer + startup/6h self-test that
+    connects).
+- **Sub-decisions** (this session):
+  - **Default**: fresh installs default to `lazy`; a database upgraded from before BL-006 (no
+    `auth_mode` row) resolves to `keepalive`, and `ConfigStore.seedDefaults()` deliberately does
+    **not** seed `auth_mode` into a non-empty DB (an `INSERT OR IGNORE` would otherwise silently flip
+    an existing keep-alive deployment to `lazy`). The user switches an existing install manually.
+  - **"Live session"** = a *non-expired access token* (via `SessionStore.isExpired`), not merely any
+    in-memory session — so after ~2h with no scan the self-test goes dormant again (zero background
+    calls while idle, and no full re-login loop once the 72h cookie lapses).
+  - **No auto-connect on the dashboard**: in `lazy` mode the passive health reads report a new
+    `idle` state instead of connecting; a manual **`POST /api/health/connect`** (forces an on-demand
+    login + full probe) powers "connect / check now" buttons on both the Dashboard and the Config page.
+- **Decided by**: User (Ivan).
+- **Rationale**: minimise calls to the private API when the scanner is idle, while keeping a one-click
+  way to verify connectivity and an unchanged snappy mode for those who prefer it.
+- **Scope**: middleware + UI only. `auth_mode` config key (`AppConfig`/`ApiConfig`); `TokenLifecycle`
+  `keepAlive` gate + `hasLiveSession()`; `runHealthSelfTest` `hasSession` gate + `HealthReport.idle`;
+  `GET /api/health` + top-level `/health` lazy gate; new `POST /api/health/connect`; config-page
+  "Gestion de la connexion" control + dashboard idle card. **`contract.md` is UNCHANGED** — this is an
+  internal lifecycle policy, not a Chronodrive API behaviour.
+- **Shipped in**: BATCH-5 (loop prompt 2, 2026-06-28) on `feature/batch-5-auth-token-policy`. Full
+  entry in `BACKLOG_ARCHIVE.md`.
+
+---
+
 ## Cross-cutting consequences for later phases
 
 - **Phase 3** must define a **rich HTTP response contract** (multiple distinct states: success / not-found / ineligible / out-of-stock / API error) so ESPHome can drive LED colors + buzzer (CLARIFY-04).

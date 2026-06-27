@@ -32,6 +32,13 @@ export interface TokenLifecycleDeps {
   emit?: EmitEvent;
   store?: SessionStore;
   skewMs?: number;
+  /**
+   * Whether to keep the token alive with a background refresh timer (BL-006). `true` (default) arms a
+   * silent refresh ~`skewMs` before each `exp`; `false` (lazy mode) never arms the timer, so the token
+   * is refreshed only on demand by `getAccessToken()` when a scan needs it. The default keeps the
+   * historical keep-alive behaviour for callers that don't set it.
+   */
+  keepAlive?: boolean;
   /** Injectable clock for deterministic tests. */
   now?: () => number;
 }
@@ -44,6 +51,7 @@ export class TokenLifecycle {
   private readonly emit?: EmitEvent;
   private readonly store: SessionStore;
   private readonly skewMs: number;
+  private readonly keepAlive: boolean;
   private readonly now: () => number;
 
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -58,6 +66,7 @@ export class TokenLifecycle {
     this.emit = deps.emit;
     this.store = deps.store ?? new SessionStore();
     this.skewMs = deps.skewMs ?? REFRESH_SKEW_MS;
+    this.keepAlive = deps.keepAlive ?? true;
     this.now = deps.now ?? Date.now;
   }
 
@@ -139,7 +148,9 @@ export class TokenLifecycle {
     }
     this.store.set(session);
     this.onSession?.(session);
-    this.scheduleRefresh(session);
+    // Lazy mode (keepAlive=false) never arms the background timer: the token simply expires and the
+    // next on-demand getAccessToken() refreshes it (BL-006).
+    if (this.keepAlive) this.scheduleRefresh(session);
     return session;
   }
 
@@ -166,5 +177,14 @@ export class TokenLifecycle {
   /** Current session snapshot, or `null`. */
   getSession(): SessionState | null {
     return this.store.get();
+  }
+
+  /**
+   * Whether a *live* session exists — i.e. a non-expired access token (within the refresh skew). Used
+   * by the lazy-mode health gate to decide whether the passive self-test should run without forcing a
+   * login (BL-006). An expired-but-present session counts as not live.
+   */
+  hasLiveSession(): boolean {
+    return !this.store.isExpired(this.skewMs, this.now());
   }
 }

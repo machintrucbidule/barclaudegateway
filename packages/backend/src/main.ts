@@ -69,9 +69,13 @@ export async function main(): Promise<void> {
 
   // Background health self-test: detect a breakage even with no scans (the user chose "both"). Run once
   // at startup, then every 6h. Failures are swallowed — a self-test crash must not take the server down.
+  // BL-006: in lazy mode the proactive self-test must not force a login — gate it on a live session so
+  // it stays dormant while idle. In keep-alive mode it runs (and connects) as before.
+  const lazy = services.config.authMode === 'lazy';
   const runSelfTest = (): void => {
     void runHealthSelfTest(services.chronodrive, {
       isConfigured: () => services.credentialStore.has(),
+      ...(lazy ? { hasSession: () => services.auth.hasLiveSession() } : {}),
     })
       .then((report) => {
         errorMonitor.ingestHealthReport(report);
@@ -81,14 +85,15 @@ export async function main(): Promise<void> {
         services.emit({
           category: 'other',
           type: 'self_test',
-          level: report.configured === false || report.ok ? 'info' : 'error',
-          message:
-            report.configured === false
+          level: report.configured === false || report.idle || report.ok ? 'info' : 'error',
+          message: report.idle
+            ? 'Health self-test skipped (lazy, idle)'
+            : report.configured === false
               ? 'Health self-test skipped (not configured)'
               : report.ok
                 ? 'Health self-test passed'
                 : 'Health self-test failed',
-          detail: { configured: report.configured, ok: report.ok, failing },
+          detail: { configured: report.configured, idle: report.idle, ok: report.ok, failing },
         });
       })
       .catch(() => {
@@ -111,6 +116,7 @@ export async function main(): Promise<void> {
     {
       pipeline,
       chronodrive: services.chronodrive,
+      auth: services.auth,
       configStore: services.configStore,
       destinations,
       credentialStore: services.credentialStore,

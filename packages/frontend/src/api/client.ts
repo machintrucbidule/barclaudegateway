@@ -114,6 +114,8 @@ export const api = {
   },
 
   getHealth: (): Promise<HealthReport> => getJson('/api/health'),
+  /** BL-006: force an on-demand login + full probe (the "connect now" buttons). */
+  connectNow: (): Promise<HealthReport> => sendJson('POST', '/api/health/connect'),
 
   getErrorState: (): Promise<ErrorState> => getJson('/api/error-state'),
   sendHaWebhookTest: (): Promise<WebhookTestResult> => sendJson('POST', '/api/notify/test'),

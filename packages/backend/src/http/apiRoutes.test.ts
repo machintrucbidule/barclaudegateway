@@ -3,8 +3,10 @@ import { getGlobalDispatcher, MockAgent, request, setGlobalDispatcher } from 'un
 import type { Dispatcher } from 'undici';
 import type { FastifyInstance } from 'fastify';
 import type { AppConfig } from '../config/defaults.js';
+import { CONFIG_KEYS } from '../config/defaults.js';
 import { HttpClient } from '../http/client.js';
 import { ChronodriveClient } from '../chronodrive/client.js';
+import { TokenLifecycle } from '../auth/lifecycle.js';
 import type { Database } from '../storage/db.js';
 import { openDatabase } from '../storage/db.js';
 import { ConfigStore } from '../storage/config.js';
@@ -33,6 +35,7 @@ const CONFIG: AppConfig = {
   siteMode: 'DRIVE',
   siteId: '1016',
   haWebhookUrl: '',
+  authMode: 'keepalive',
 };
 
 const pathIs =
@@ -51,6 +54,7 @@ function quietClient(): HttpClient {
 interface Harness {
   app: FastifyInstance;
   db: Database;
+  configStore: ConfigStore;
   destinations: DestinationsStore;
   credentialStore: CredentialStore;
   scanLog: ScanLog;
@@ -64,6 +68,9 @@ function buildHarness(): Harness {
   const db = openDatabase(':memory:');
   const configStore = new ConfigStore(db);
   configStore.seedDefaults();
+  // Default to keep-alive so the pre-BL-006 health tests keep their connect-on-read behaviour; the
+  // lazy-mode tests flip it explicitly via configStore.set.
+  configStore.set(CONFIG_KEYS.authMode, 'keepalive');
   const destinations = new DestinationsStore(configStore);
   const scanLog = new ScanLog(db);
   const eventLog = new EventLog(db);
@@ -77,6 +84,18 @@ function buildHarness(): Harness {
     getToken: async () => 'TOKEN',
     siteId: '1016',
   });
+  // BL-006: a no-session lifecycle — hasLiveSession() is false unless a test sets one, so the lazy
+  // health gate reports idle without forcing a connection.
+  const auth = new TokenLifecycle({
+    http: quietClient(),
+    config: {
+      identityBaseUrl: CONFIG.identityBaseUrl,
+      clientId: CONFIG.clientId,
+      redirectUri: CONFIG.redirectUri,
+      scope: CONFIG.scope,
+    },
+    loadCredentials: async () => ({ email: 'e', password: 'p' }),
+  });
   const pipeline = new IngestPipeline({ chronodrive, scanLog, destinations, events, emit });
   const errorMonitor = new ErrorMonitor();
   const haWebhook = new HaWebhookNotifier({
@@ -85,6 +104,7 @@ function buildHarness(): Harness {
   const app = buildServer({
     pipeline,
     chronodrive,
+    auth,
     configStore,
     destinations,
     credentialStore,
@@ -99,6 +119,7 @@ function buildHarness(): Harness {
   return {
     app,
     db,
+    configStore,
     destinations,
     credentialStore,
     scanLog,
@@ -393,6 +414,49 @@ describe('api routes (fastify.inject)', () => {
     const res = await h.app.inject({ method: 'GET', url: '/api/health' });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ configured: false, checks: [] });
+  });
+
+  it('round-trips authMode through PUT/GET /api/config (BL-006)', async () => {
+    const lazy = { ...CONFIG, authMode: 'lazy' as const };
+    const put = await h.app.inject({ method: 'PUT', url: '/api/config', payload: lazy });
+    expect(put.statusCode).toBe(200);
+    expect(put.json().authMode).toBe('lazy');
+    const get = await h.app.inject({ method: 'GET', url: '/api/config' });
+    expect(get.json().authMode).toBe('lazy');
+  });
+
+  it('PUT /api/config rejects an invalid authMode (BL-006)', async () => {
+    const bad = { ...CONFIG, authMode: 'sometimes' };
+    const res = await h.app.inject({ method: 'PUT', url: '/api/config', payload: bad });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('GET /api/health is idle (no connection) in lazy mode with no live session (BL-006)', async () => {
+    h.credentialStore.save({ email: 'user@example.com', password: SECRET_PASSWORD });
+    h.configStore.set(CONFIG_KEYS.authMode, 'lazy');
+    // No interceptors registered: a connection attempt would fail (disableNetConnect).
+    const res = await h.app.inject({ method: 'GET', url: '/api/health' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ configured: true, idle: true, checks: [] });
+  });
+
+  it('POST /api/health/connect forces a probe even in lazy mode (BL-006)', async () => {
+    h.credentialStore.save({ email: 'user@example.com', password: SECRET_PASSWORD });
+    h.configStore.set(CONFIG_KEYS.authMode, 'lazy');
+    pool
+      .intercept({ path: pathIs('/v1/search-suggestions'), method: 'GET' })
+      .reply(200, { products: [{ id: 'P', labels: {}, eans: [], stock: 'HIGH_STOCK' }] });
+    pool
+      .intercept({ path: pathIs('/v1/customers/me/carts'), method: 'GET' })
+      .reply(200, { content: [{ id: 'CART-1', items: [], isOrdered: false }] });
+    pool
+      .intercept({ path: pathIs('/v1/shopping-lists'), method: 'GET' })
+      .reply(200, { content: [], page: {} });
+
+    const res = await h.app.inject({ method: 'POST', url: '/api/health/connect' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().idle).toBeUndefined();
+    expect(res.json().checks.length).toBeGreaterThan(0);
   });
 });
 
