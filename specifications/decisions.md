@@ -2,7 +2,7 @@
 
 > Decisions are added here as they are resolved. Each entry records: the question, the options considered, the choice made, and who decided.
 > All Phase 0 functional clarifications (CLARIFY-_) and architecture decisions (DECISION-_) are now resolved.
-> Last updated: 2026-06-27
+> Last updated: 2026-06-27 (DECISION-018 — operational event-logging architecture, BATCH-3)
 
 ---
 
@@ -437,6 +437,61 @@
   validation gate. This is the final build phase — the project is complete and hands off to the
   iterative maintenance loop (`BACKLOG.md` + the three loop prompts); no Phase 8 prompt is generated.
   The hardening fix ships as image **v0.0.3**.
+
+---
+
+## Resolved — Maintenance loop (post-Phase 7)
+
+### [DECISION-018] Operational event-logging architecture (BATCH-3 / BL-003, BL-004)
+
+- **Date**: 2026-06-27
+- **Question**: The original single "Real-time log stream" page was built as a live *scan* stream, but
+  the operator wanted genuine **operational logs** — every Chronodrive auth exchange, the per-step
+  detail of each scan, every token refresh, and system events — filterable by area, with errors shown
+  clearly; **and** a separate **searchable, paginated scan history**. What storage shape, event
+  taxonomy, transport and retention implement this, and how is the existing scan event path affected?
+- **Options considered** (each surfaced to the user, who chose):
+  - **Event bus** — generalize the existing `ScanEventBus` into one app-wide bus carrying both
+    `ScanEvent` and `LogEvent`, vs a **dedicated** `EventLogBus` + `event_log` table reserved for
+    `LogEvent`s. **Chosen: dedicated subsystem.** The `ScanEventBus` is left untouched (it still feeds
+    the Phase-5 `ErrorMonitor` and the scan history), so the proven scan path carries zero regression
+    risk; the two buses each have one clear role.
+  - **Retention** — match the scan-log (10 000 rows OR 10 years) vs a verbosity-aware bound. **Chosen:
+    50 000 rows OR 10 years**, most restrictive wins, pruned on startup + daily (mirrors the `ScanLog`
+    retention model). The operational log is far more verbose (several lines per scan + each refresh),
+    so the higher row cap is the effective bound.
+  - **Transport** — reuse the established SSE + in-process-bus pattern (DECISION-012). **Chosen: SSE
+    live tail** (`GET /api/events/stream`) for the page tail + REST (`GET /api/events`, category filter
+    + pagination) for the initial load.
+- **`LogEvent` shape**: `id`, `at` (epoch-ms), `category` (`auth` | `scan` | `other`), `type` (a typed
+  union — `login_step1/2/3`, `session_captured`, `login_complete`, `silent_refresh`, `full_relogin`,
+  `login_required`, `ean_read`, `search_request`, `product_resolved`, `product_not_found`,
+  `cart_write`, `list_write`, `scan_complete`, `self_test`, `startup`, `config_change`,
+  `credentials_change`, `ha_alert`), `level` (`info` | `warn` | `error`), secret-free `message`, optional
+  redacted `detail`. `category=other` is the catch-all (health self-test, startup, config/credentials
+  changes, HA alerts). Shared type in `@barclaudegateway/shared`.
+- **Emission**: a single `EventLogger.record` (redact → persist → publish) is injected as an optional
+  `EmitEvent` into auth (per PKCE step + refresh/re-login, success and failure), the scan pipeline (the
+  ordered `ean_read → search_request → product_resolved|not_found → cart/list writes → scan_complete`
+  set), the health self-test, the config/credentials routes, the HA notifier, and startup. Optional so
+  un-wired call sites stay no-ops (existing unit tests untouched).
+- **Redaction**: every event passes through `logging/redact.ts` (`redactSecrets`) before storage and
+  streaming, so no token/cookie/password/code ever reaches the `event_log` table or the SSE tail
+  (contract.md §8). A unit test asserts a secret in `detail` is masked.
+- **Scan history (BL-004)**: `GET /api/scans` gains status/search/`page`/`pageSize` (10/50/100/500/all,
+  default 100) + a `total`; `ScanLog` gains a filtered query + count; the old live page becomes a
+  **static** `Historique des scans` (no SSE auto-append) and the new `Logs techniques` page is the
+  operational-logs tail.
+- **`contract.md` unchanged**: internal journaling, NOT a Chronodrive API behaviour (same rationale as
+  DECISION-016 `not_configured`).
+- **Decided by**: User (Ivan) — the dedicated-bus architecture and the 50 000-row retention chosen
+  explicitly from presented trade-offs; the taxonomy, transport and emission points presented and
+  approved.
+- **Rationale**: A dedicated subsystem gives real operational visibility (auth + per-step scan +
+  refreshes + system) without touching the proven scan path; an SSE tail matches the "live" intent and
+  reuses an existing pattern; central redaction keeps the new journal secret-free by construction; and
+  splitting the page into operational-logs + scan-history resolves the long-standing spec ambiguity.
+- **Shipped in**: BATCH-3 (loop prompt 2, 2026-06-27). Full entries in `BACKLOG_ARCHIVE.md`.
 
 ---
 

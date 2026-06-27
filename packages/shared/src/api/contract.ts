@@ -56,11 +56,21 @@ export interface DestinationsResponse {
   listsError?: { category: string; message: string };
 }
 
-/** `GET /api/scans` envelope: total journalled count plus the most recent rows (newest first). */
+/**
+ * `GET /api/scans` envelope (BL-004): one page of the scan history (newest first) plus the pagination
+ * metadata. `total` is the number of rows matching the active status/search filter (the whole set, not
+ * just this page); `pageSize` is the requested page size (the sentinel {@link SCANS_PAGE_SIZE_ALL} means
+ * "all matching rows on a single page").
+ */
 export interface ScansResponse {
-  count: number;
   scans: ScanRecord[];
+  total: number;
+  page: number;
+  pageSize: number;
 }
+
+/** Page-size sentinel for "all matching rows" (BL-004 page-size selector option "all"). */
+export const SCANS_PAGE_SIZE_ALL = 'all';
 
 /**
  * A critical API breakage observed by the backend error monitor (Phase 5). Secret-free: the

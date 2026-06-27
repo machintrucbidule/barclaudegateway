@@ -109,6 +109,35 @@ describe('Reach5 login flows (mocked)', () => {
     expect(session.expiresAtMs).toBe(exp * 1000);
   });
 
+  it('emits an ordered set of auth log lines for a full login (BL-003)', async () => {
+    const pool = mockAgent.get(IDENTITY);
+    pool
+      .intercept({ path: '/identity/v1/password/login', method: 'POST' })
+      .reply(200, { tkn: 'TKN' });
+    pool.intercept({ path: authorizePath, method: 'GET' }).reply(200, AUTHORIZE_HTML('AUTHCODE'), {
+      headers: { 'content-type': 'text/html', 'set-cookie': SESSION_COOKIES },
+    });
+    pool.intercept({ path: '/oauth/token', method: 'POST' }).reply(200, {
+      access_token: makeJwt(exp),
+      id_token: 'ID',
+      expires_in: 7200,
+      token_type: 'Bearer',
+    });
+
+    const emitted: Array<{ category: string; type: string }> = [];
+    await performFullLogin(quietClient(), CONFIG, CREDS, (e) =>
+      emitted.push({ category: e.category, type: e.type }),
+    );
+    expect(emitted.every((e) => e.category === 'auth')).toBe(true);
+    expect(emitted.map((e) => e.type)).toEqual([
+      'login_step1',
+      'login_step2',
+      'session_captured',
+      'login_step3',
+      'login_complete',
+    ]);
+  });
+
   it('fails a full login when Step 2 sets no __Host-SESSION cookie', async () => {
     const pool = mockAgent.get(IDENTITY);
     pool
@@ -144,10 +173,18 @@ describe('Reach5 login flows (mocked)', () => {
       token_type: 'Bearer',
     });
 
-    const session = await performSilentRefresh(quietClient(), CONFIG, '__Host-SESSION=sess123');
+    const emitted: string[] = [];
+    const session = await performSilentRefresh(
+      quietClient(),
+      CONFIG,
+      '__Host-SESSION=sess123',
+      (e) => emitted.push(e.type),
+    );
     expect(session.idToken).toBe('ID2');
     // No fresh cookie issued → the previous one is retained.
     expect(session.cookieHeader).toBe('__Host-SESSION=sess123');
+    // BL-003: a silent refresh produces visible auth lines (the two steps + a refresh marker).
+    expect(emitted).toEqual(['login_step2', 'login_step3', 'silent_refresh']);
   });
 
   it('throws LoginRequiredError when the session is too old', async () => {

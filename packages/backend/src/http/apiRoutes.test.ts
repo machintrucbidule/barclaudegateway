@@ -11,8 +11,11 @@ import { ConfigStore } from '../storage/config.js';
 import { CredentialStore } from '../storage/credentials.js';
 import { DestinationsStore } from '../storage/destinations.js';
 import { ScanLog } from '../storage/scanLog.js';
+import { EventLog } from '../storage/eventLog.js';
 import { IngestPipeline } from '../ingest/pipeline.js';
 import { ScanEventBus } from '../ingest/scanEvents.js';
+import { EventLogBus } from '../logging/eventLogBus.js';
+import { EventLogger } from '../logging/eventLogger.js';
 import { buildServer } from '../ingest/server.js';
 import { ErrorMonitor } from '../health/errorMonitor.js';
 import { HaWebhookNotifier } from '../health/haWebhook.js';
@@ -52,6 +55,8 @@ interface Harness {
   credentialStore: CredentialStore;
   scanLog: ScanLog;
   events: ScanEventBus;
+  eventLog: EventLog;
+  eventBus: EventLogBus;
   errorMonitor: ErrorMonitor;
 }
 
@@ -61,6 +66,9 @@ function buildHarness(): Harness {
   configStore.seedDefaults();
   const destinations = new DestinationsStore(configStore);
   const scanLog = new ScanLog(db);
+  const eventLog = new EventLog(db);
+  const eventBus = new EventLogBus();
+  const emit = new EventLogger(eventLog, eventBus).emit;
   const credentialStore = new CredentialStore(db, Buffer.alloc(32));
   const events = new ScanEventBus();
   const chronodrive = new ChronodriveClient({
@@ -69,7 +77,7 @@ function buildHarness(): Harness {
     getToken: async () => 'TOKEN',
     siteId: '1016',
   });
-  const pipeline = new IngestPipeline({ chronodrive, scanLog, destinations, events });
+  const pipeline = new IngestPipeline({ chronodrive, scanLog, destinations, events, emit });
   const errorMonitor = new ErrorMonitor();
   const haWebhook = new HaWebhookNotifier({
     getUrl: () => configStore.readAppConfig().haWebhookUrl,
@@ -82,10 +90,23 @@ function buildHarness(): Harness {
     credentialStore,
     scanLog,
     events,
+    eventLog,
+    eventBus,
+    emit,
     errorMonitor,
     haWebhook,
   });
-  return { app, db, destinations, credentialStore, scanLog, events, errorMonitor };
+  return {
+    app,
+    db,
+    destinations,
+    credentialStore,
+    scanLog,
+    events,
+    eventLog,
+    eventBus,
+    errorMonitor,
+  };
 }
 
 describe('api routes (fastify.inject)', () => {
@@ -262,19 +283,91 @@ describe('api routes (fastify.inject)', () => {
     expect(body.listsError.category).toBe('server');
   });
 
-  it('GET /api/scans returns the journal count + recent rows, with no secrets', async () => {
+  it('GET /api/scans returns the total + page of rows (newest first), with no secrets', async () => {
     h.scanLog.append({ ean: '111', outcome: 'added', message: 'Added "X"' });
     h.scanLog.append({ ean: '222', outcome: 'not_found', message: 'EAN not in catalogue' });
     // A credential is set so we can prove it never leaks into the scans response.
     h.credentialStore.save({ email: 'user@example.com', password: SECRET_PASSWORD });
 
-    const res = await h.app.inject({ method: 'GET', url: '/api/scans?limit=10' });
+    const res = await h.app.inject({ method: 'GET', url: '/api/scans' });
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body.count).toBe(2);
+    expect(body.total).toBe(2);
+    expect(body).toMatchObject({ page: 1, pageSize: 100 });
     expect(body.scans).toHaveLength(2);
     expect(body.scans[0].ean).toBe('222'); // newest first
     expect(res.body).not.toContain(SECRET_PASSWORD);
+  });
+
+  it('GET /api/scans paginates with page/pageSize and reports the full total (BL-004)', async () => {
+    for (let i = 0; i < 7; i += 1) h.scanLog.append({ ean: `E${String(i)}`, outcome: 'added' });
+
+    const p1 = (await h.app.inject({ method: 'GET', url: '/api/scans?pageSize=10&page=1' })).json();
+    // pageSize=10 is a valid option; only 7 rows exist.
+    expect(p1.total).toBe(7);
+    expect(p1.scans).toHaveLength(7);
+
+    // An out-of-range pageSize falls back to the default; page 2 of size 5 holds the remainder.
+    const p2 = (await h.app.inject({ method: 'GET', url: '/api/scans?pageSize=50&page=2' })).json();
+    expect(p2.total).toBe(7);
+    expect(p2.scans).toHaveLength(0); // page 2 of 50 is empty when only 7 rows exist
+  });
+
+  it('GET /api/scans filters by status and searches by EAN/message (BL-004)', async () => {
+    h.scanLog.append({ ean: '111', outcome: 'added', message: 'Added "Milk"' });
+    h.scanLog.append({ ean: '222', outcome: 'not_found', message: 'EAN not in catalogue' });
+    h.scanLog.append({ ean: '333', outcome: 'added', message: 'Added "Bread"' });
+
+    const byStatus = (
+      await h.app.inject({ method: 'GET', url: '/api/scans?status=not_found' })
+    ).json();
+    expect(byStatus.total).toBe(1);
+    expect(byStatus.scans[0].ean).toBe('222');
+
+    const bySearchEan = (
+      await h.app.inject({ method: 'GET', url: '/api/scans?search=333' })
+    ).json();
+    expect(bySearchEan.total).toBe(1);
+    expect(bySearchEan.scans[0].ean).toBe('333');
+
+    const bySearchMsg = (
+      await h.app.inject({ method: 'GET', url: '/api/scans?search=Bread' })
+    ).json();
+    expect(bySearchMsg.total).toBe(1);
+    expect(bySearchMsg.scans[0].ean).toBe('333');
+  });
+
+  it('GET /api/scans?pageSize=all returns every matching row on one page (BL-004)', async () => {
+    for (let i = 0; i < 12; i += 1) h.scanLog.append({ ean: `E${String(i)}`, outcome: 'added' });
+    const all = (await h.app.inject({ method: 'GET', url: '/api/scans?pageSize=all' })).json();
+    expect(all.total).toBe(12);
+    expect(all.scans).toHaveLength(12);
+  });
+
+  it('GET /api/events returns recent events, filterable by category (BL-003)', async () => {
+    h.eventLog.append({
+      category: 'auth',
+      type: 'login_complete',
+      level: 'info',
+      message: 'login',
+    });
+    h.eventLog.append({ category: 'scan', type: 'scan_complete', level: 'info', message: 'scan' });
+    h.eventLog.append({ category: 'other', type: 'startup', level: 'info', message: 'startup' });
+
+    const all = (await h.app.inject({ method: 'GET', url: '/api/events' })).json();
+    expect(all.total).toBe(3);
+    expect(all.events).toHaveLength(3);
+    expect(all.events[0].category).toBe('other'); // newest first
+
+    const auth = (await h.app.inject({ method: 'GET', url: '/api/events?category=auth' })).json();
+    expect(auth.total).toBe(1);
+    expect(auth.events[0].type).toBe('login_complete');
+  });
+
+  it('PUT /api/config journals a config_change event (BL-003)', async () => {
+    await h.app.inject({ method: 'PUT', url: '/api/config', payload: CONFIG });
+    const events = h.eventLog.query({ page: 1, pageSize: 50 });
+    expect(events.some((e) => e.type === 'config_change')).toBe(true);
   });
 
   it('GET /api/health runs the self-test when configured', async () => {
@@ -331,6 +424,29 @@ describe('api SSE stream (real socket)', () => {
       if (buffer.includes('data:')) break;
     }
     expect(buffer).toContain('"ean":"999"');
+    res.body.destroy();
+  });
+
+  it('GET /api/events/stream sets event-stream headers and relays a published event', async () => {
+    const res = await request(`${base}/api/events/stream`);
+    expect(res.statusCode).toBe(200);
+    expect(String(res.headers['content-type'])).toContain('text/event-stream');
+
+    h.eventBus.publish({
+      id: 1,
+      at: 1,
+      category: 'auth',
+      type: 'login_complete',
+      level: 'info',
+      message: 'login ok',
+    });
+
+    let buffer = '';
+    for await (const chunk of res.body) {
+      buffer += chunk.toString();
+      if (buffer.includes('data:')) break;
+    }
+    expect(buffer).toContain('"type":"login_complete"');
     res.body.destroy();
   });
 });

@@ -10,9 +10,15 @@
  * which we parse with a regex (§2.3).
  */
 
-import type { OAuthTokenResponse, PasswordLoginResponse } from '@barclaudegateway/shared';
-import { AuthError, LoginRequiredError } from '../http/errors.js';
+import type {
+  ErrorCategory,
+  LogEventType,
+  OAuthTokenResponse,
+  PasswordLoginResponse,
+} from '@barclaudegateway/shared';
+import { AuthError, ChronodriveError, LoginRequiredError } from '../http/errors.js';
 import type { HttpClient } from '../http/client.js';
+import type { EmitEvent } from '../logging/eventLogger.js';
 import { generateNonce, generatePkcePair } from './pkce.js';
 import type { SessionState } from './session.js';
 import { decodeJwtExpMs } from './session.js';
@@ -220,6 +226,44 @@ export async function stepTokenExchange(
   return res.data;
 }
 
+function authCategory(error: unknown): ErrorCategory {
+  return error instanceof ChronodriveError ? error.category : 'unknown';
+}
+
+/** Compact, secret-free failure description for an auth log line. */
+function describeAuthError(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).slice(0, 200);
+}
+
+/**
+ * Run one PKCE step, emitting an `info` line on success and an `error` line on failure (BL-003). A
+ * `login_required` is an expected refresh→re-login transition that the lifecycle logs as its own line,
+ * so it is re-thrown here without an error line.
+ */
+async function emitAuthStep<T>(
+  emit: EmitEvent | undefined,
+  type: LogEventType,
+  label: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  try {
+    const result = await fn();
+    emit?.({ category: 'auth', type, level: 'info', message: `${label} OK` });
+    return result;
+  } catch (error) {
+    if (!(error instanceof LoginRequiredError)) {
+      emit?.({
+        category: 'auth',
+        type,
+        level: 'error',
+        message: `${label} failed: ${describeAuthError(error)}`,
+        detail: { category: authCategory(error) },
+      });
+    }
+    throw error;
+  }
+}
+
 function toSessionState(tokens: OAuthTokenResponse, cookieHeader: string): SessionState {
   const expFromJwt = decodeJwtExpMs(tokens.access_token);
   return {
@@ -235,21 +279,49 @@ export async function performFullLogin(
   http: HttpClient,
   config: AuthConfig,
   credentials: Credentials,
+  emit?: EmitEvent,
 ): Promise<SessionState> {
   const { codeVerifier, codeChallenge } = generatePkcePair();
-  const { tkn, cookieHeader: loginCookies } = await stepPasswordLogin(http, config, credentials);
-  const { code, cookieHeader } = await stepAuthorize(http, config, {
-    codeChallenge,
-    nonce: generateNonce(),
-    tkn,
-    cookieHeader: loginCookies,
-  });
+  const { tkn, cookieHeader: loginCookies } = await emitAuthStep(
+    emit,
+    'login_step1',
+    'Password login (step 1)',
+    () => stepPasswordLogin(http, config, credentials),
+  );
+  const { code, cookieHeader } = await emitAuthStep(emit, 'login_step2', 'Authorize (step 2)', () =>
+    stepAuthorize(http, config, {
+      codeChallenge,
+      nonce: generateNonce(),
+      tkn,
+      cookieHeader: loginCookies,
+    }),
+  );
   if (!cookieHeader.includes('__Host-SESSION')) {
+    emit?.({
+      category: 'auth',
+      type: 'session_captured',
+      level: 'error',
+      message: 'Step 2 did not set the __Host-SESSION cookie',
+    });
     throw new AuthError('Step 2 did not set the __Host-SESSION cookie', {
       endpoint: 'GET /oauth/authorize',
     });
   }
-  const tokens = await stepTokenExchange(http, config, { code, codeVerifier });
+  emit?.({
+    category: 'auth',
+    type: 'session_captured',
+    level: 'info',
+    message: 'Session cookie captured (__Host-SESSION)',
+  });
+  const tokens = await emitAuthStep(emit, 'login_step3', 'Token exchange (step 3)', () =>
+    stepTokenExchange(http, config, { code, codeVerifier }),
+  );
+  emit?.({
+    category: 'auth',
+    type: 'login_complete',
+    level: 'info',
+    message: 'Full login complete',
+  });
   return toSessionState(tokens, cookieHeader);
 }
 
@@ -261,13 +333,23 @@ export async function performSilentRefresh(
   http: HttpClient,
   config: AuthConfig,
   cookieHeader: string,
+  emit?: EmitEvent,
 ): Promise<SessionState> {
   const { codeVerifier, codeChallenge } = generatePkcePair();
-  const { code, cookieHeader: refreshedCookie } = await stepAuthorize(http, config, {
-    codeChallenge,
-    nonce: generateNonce(),
-    cookieHeader,
+  const { code, cookieHeader: refreshedCookie } = await emitAuthStep(
+    emit,
+    'login_step2',
+    'Silent authorize (step 2)',
+    () => stepAuthorize(http, config, { codeChallenge, nonce: generateNonce(), cookieHeader }),
+  );
+  const tokens = await emitAuthStep(emit, 'login_step3', 'Silent token exchange (step 3)', () =>
+    stepTokenExchange(http, config, { code, codeVerifier }),
+  );
+  emit?.({
+    category: 'auth',
+    type: 'silent_refresh',
+    level: 'info',
+    message: 'Silent token refresh complete',
   });
-  const tokens = await stepTokenExchange(http, config, { code, codeVerifier });
   return toSessionState(tokens, refreshedCookie || cookieHeader);
 }

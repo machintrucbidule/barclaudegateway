@@ -9,7 +9,8 @@
 > [ops/grooming](./prompts/loop-3-ops-grooming.md). Schema and process: [`ROADMAP.md`](./ROADMAP.md) §
 > "Iterative maintenance loop".
 >
-> Last updated: 2026-06-27
+> Last updated: 2026-06-27 (BATCH-3 shipped → archived; BATCH-1 is blocked on hardware, so **BATCH-2**
+> is the next actionable batch)
 
 ---
 
@@ -32,7 +33,7 @@
 
 ---
 
-## BATCH-1 — Hardware validation (top batch, P1)
+## BATCH-1 — Hardware validation (P1, blocked — ESP32 not received)
 
 ### [BL-001] Validate the full scan flow on real ESP32 hardware
 

@@ -33,9 +33,21 @@ export async function main(): Promise<void> {
   const env = loadEnv();
   const services = createServices(env);
 
+  // Both bounded journals are pruned on startup and daily (DECISION-003 + BL-003 retention).
   services.scanLog.prune();
-  const dailyPrune = setInterval(() => services.scanLog.prune(), ONE_DAY_MS);
+  services.eventLog.prune();
+  const dailyPrune = setInterval(() => {
+    services.scanLog.prune();
+    services.eventLog.prune();
+  }, ONE_DAY_MS);
   dailyPrune.unref();
+
+  services.emit({
+    category: 'other',
+    type: 'startup',
+    level: 'info',
+    message: 'BarclaudeGateway started',
+  });
 
   // One bus, shared by the pipeline (publisher) and the SSE route (subscriber).
   const events = new ScanEventBus();
@@ -46,6 +58,7 @@ export async function main(): Promise<void> {
   const errorMonitor = new ErrorMonitor();
   const haWebhook = new HaWebhookNotifier({
     getUrl: () => services.configStore.readAppConfig().haWebhookUrl,
+    emit: services.emit,
   });
   events.subscribe((event) => {
     errorMonitor.ingestScan(event);
@@ -62,6 +75,21 @@ export async function main(): Promise<void> {
     })
       .then((report) => {
         errorMonitor.ingestHealthReport(report);
+        const failing = report.checks
+          .filter((c) => c.status === 'error')
+          .map((c) => ({ endpoint: c.endpoint, category: c.category }));
+        services.emit({
+          category: 'other',
+          type: 'self_test',
+          level: report.configured === false || report.ok ? 'info' : 'error',
+          message:
+            report.configured === false
+              ? 'Health self-test skipped (not configured)'
+              : report.ok
+                ? 'Health self-test passed'
+                : 'Health self-test failed',
+          detail: { configured: report.configured, ok: report.ok, failing },
+        });
       })
       .catch(() => {
         // A self-test that throws outright is itself a signal, but never fatal to the server.
@@ -76,6 +104,7 @@ export async function main(): Promise<void> {
     scanLog: services.scanLog,
     destinations,
     events,
+    emit: services.emit,
   });
 
   const app = buildServer(
@@ -87,6 +116,9 @@ export async function main(): Promise<void> {
       credentialStore: services.credentialStore,
       scanLog: services.scanLog,
       events,
+      eventLog: services.eventLog,
+      eventBus: services.eventBus,
+      emit: services.emit,
       errorMonitor,
       haWebhook,
       uiDir: resolveUiDir(),

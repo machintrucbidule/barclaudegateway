@@ -1,10 +1,11 @@
 /**
  * SQLite storage via Node's built-in `node:sqlite` (DECISION-003, design gate).
  *
- * Single file on a Docker volume in production, `:memory:` in tests. Three tables:
+ * Single file on a Docker volume in production, `:memory:` in tests. Four tables:
  *  - `config`      — static Chronodrive API params (seeded from code, editable in Phase 4);
  *  - `credentials` — the AES-256-GCM encrypted email/password (single row);
- *  - `scan_log`    — bounded scan journal (retention enforced in scanLog.ts).
+ *  - `scan_log`    — bounded scan journal (retention enforced in scanLog.ts);
+ *  - `event_log`   — bounded operational-log journal (BL-003, retention enforced in eventLog.ts).
  *
  * `node:sqlite` is experimental in Node 24; it emits an ExperimentalWarning at runtime, which is
  * expected and accepted.
@@ -37,6 +38,19 @@ CREATE TABLE IF NOT EXISTS scan_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_scan_log_created_at ON scan_log (created_at);
+
+CREATE TABLE IF NOT EXISTS event_log (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  at       INTEGER NOT NULL,
+  category TEXT NOT NULL,
+  type     TEXT NOT NULL,
+  level    TEXT NOT NULL,
+  message  TEXT NOT NULL,
+  detail   TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_log_at ON event_log (at);
+CREATE INDEX IF NOT EXISTS idx_event_log_category ON event_log (category, id);
 `;
 
 /** Open (or create) the database file and apply the schema migrations. */

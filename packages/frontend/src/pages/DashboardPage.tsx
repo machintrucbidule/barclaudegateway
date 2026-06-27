@@ -98,7 +98,7 @@ function RecentScans({ data }: { data: ScansResponse }): JSX.Element {
         <Group justify="space-between">
           <Title order={4}>Derniers scans</Title>
           <Text size="sm" c="dimmed">
-            {data.count} scan(s) au total
+            {data.total} scan(s) au total
           </Text>
         </Group>
 

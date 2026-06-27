@@ -8,6 +8,7 @@
 export * from './chronodrive/contract.js';
 export * from './ingest/contract.js';
 export * from './api/contract.js';
+export * from './logging/contract.js';
 
 /**
  * Value of the Chronodrive `x-api-version` response header. Changes to this signal a backend

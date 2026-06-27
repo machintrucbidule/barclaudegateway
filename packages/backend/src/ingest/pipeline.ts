@@ -17,6 +17,8 @@
 import type {
   DestinationResult,
   ErrorCategory,
+  LogEventType,
+  LogLevel,
   Product,
   ScanProductSummary,
   ScanReason,
@@ -25,6 +27,7 @@ import type {
 } from '@barclaudegateway/shared';
 import type { ChronodriveClient } from '../chronodrive/client.js';
 import { ChronodriveError, NotFoundError } from '../http/errors.js';
+import type { EmitEvent } from '../logging/eventLogger.js';
 import type { ScanLog } from '../storage/scanLog.js';
 import type { DestinationsStore } from '../storage/destinations.js';
 import type { ScanEventBus } from './scanEvents.js';
@@ -41,6 +44,8 @@ export interface IngestPipelineDeps {
   debounce?: DebounceGate;
   /** Optional live event bus (Phase 4 SSE). When set, each journalled outcome is published to it. */
   events?: ScanEventBus;
+  /** Optional operational-log emit (BL-003): the ordered per-step scan lines. */
+  emit?: EmitEvent;
   /** Epoch-ms clock for the published event timestamp; injectable for deterministic tests. */
   now?: () => number;
 }
@@ -75,6 +80,7 @@ export class IngestPipeline {
   private readonly destinations: DestinationsStore;
   private readonly debounce: DebounceGate;
   private readonly events: ScanEventBus | undefined;
+  private readonly emit: EmitEvent | undefined;
   private readonly now: () => number;
   /** Cached active-cart id (contract.md §5.3); invalidated on a 404 cart write. */
   private cartId: string | undefined;
@@ -85,7 +91,18 @@ export class IngestPipeline {
     this.destinations = deps.destinations;
     this.debounce = deps.debounce ?? new DebounceGate();
     this.events = deps.events;
+    this.emit = deps.emit;
     this.now = deps.now ?? Date.now;
+  }
+
+  /** Emit one operational-log line in the `scan` category (BL-003). No-op when no emit is wired. */
+  private log(
+    type: LogEventType,
+    level: LogLevel,
+    message: string,
+    detail?: Record<string, unknown>,
+  ): void {
+    this.emit?.({ category: 'scan', type, level, message, ...(detail ? { detail } : {}) });
   }
 
   /** Journal the response to the live bus (Phase 4). No-op when no bus is wired (Phase 3 tests). */
@@ -104,11 +121,18 @@ export class IngestPipeline {
       };
     }
 
+    this.log('ean_read', 'info', `Barcode read: ${ean}`, { ean });
+    this.log('search_request', 'info', `Searching Chronodrive for EAN ${ean}`, { ean });
+
     let product: Product | null;
     try {
       product = await this.chronodrive.resolveEan(ean);
     } catch (error) {
       const category = categoryOf(error);
+      this.log('search_request', 'error', `Search failed: ${describeError(error)}`, {
+        ean,
+        category,
+      });
       this.scanLog.append({ ean, outcome: 'error', message: describeError(error) });
       const response: ScanResponse = {
         status: 'error',
@@ -116,22 +140,34 @@ export class IngestPipeline {
         category,
         message: 'Chronodrive request failed',
       };
+      this.log('scan_complete', 'error', 'Scan failed (Chronodrive request error)', {
+        ean,
+        category,
+      });
       this.publish(response);
       return response;
     }
 
     if (product === null) {
+      this.log('product_not_found', 'warn', `Product not found for EAN ${ean}`, { ean });
       this.scanLog.append({ ean, outcome: 'not_found', message: 'EAN not in catalogue' });
       const response: ScanResponse = {
         status: 'not_found',
         ean,
         message: 'Product not found in Chronodrive catalogue',
       };
+      this.log('scan_complete', 'info', 'Scan complete: product not found', { ean });
       this.publish(response);
       return response;
     }
 
     const summary = toSummary(product);
+    this.log('product_resolved', 'info', `Product resolved: ${summary.label ?? summary.id}`, {
+      ean,
+      productId: summary.id,
+      stock: summary.stock,
+      isEligible: summary.isEligible,
+    });
     const orderable = product.stock !== 'NO_STOCK' && product.isEligible !== false;
     const reason: ScanReason | undefined = orderable
       ? undefined
@@ -147,8 +183,25 @@ export class IngestPipeline {
       if (orderable) {
         const { result, category } = await this.writeCart(product.id);
         if (category !== undefined) failureCategory ??= category;
+        if (result.result === 'written') {
+          this.log('cart_write', 'info', `Added to cart: ${summary.label ?? summary.id}`, {
+            ean,
+            productId: summary.id,
+          });
+        } else {
+          this.log('cart_write', 'error', `Cart write failed: ${result.detail ?? ''}`, {
+            ean,
+            productId: summary.id,
+            category,
+          });
+        }
         destinations.push(result);
       } else {
+        this.log('cart_write', 'warn', `Cart skipped (${reason ?? 'unavailable'})`, {
+          ean,
+          productId: summary.id,
+          reason,
+        });
         destinations.push({
           kind: 'cart',
           name: CART_LABEL,
@@ -161,9 +214,26 @@ export class IngestPipeline {
     for (const list of enabled.lists) {
       try {
         await this.chronodrive.addToList(list.id, [{ productId: product.id, quantity: 1 }]);
+        this.log('list_write', 'info', `Added to list "${list.name}"`, {
+          ean,
+          productId: summary.id,
+          listId: list.id,
+        });
         destinations.push({ kind: 'list', id: list.id, name: list.name, result: 'written' });
       } catch (error) {
-        failureCategory ??= categoryOf(error);
+        const category = categoryOf(error);
+        failureCategory ??= category;
+        this.log(
+          'list_write',
+          'error',
+          `List "${list.name}" write failed: ${describeError(error)}`,
+          {
+            ean,
+            productId: summary.id,
+            listId: list.id,
+            category,
+          },
+        );
         destinations.push({
           kind: 'list',
           id: list.id,
@@ -214,6 +284,13 @@ export class IngestPipeline {
     }
 
     this.scanLog.append({ ean, outcome: status, message });
+
+    const level: LogLevel = status === 'error' ? 'error' : status === 'partial' ? 'warn' : 'info';
+    this.log('scan_complete', level, message, {
+      ean,
+      status,
+      ...(category !== undefined ? { category } : {}),
+    });
 
     const response: ScanResponse = { status, ean, product, destinations };
     if (reason !== undefined && status === 'added_to_lists_only') response.reason = reason;

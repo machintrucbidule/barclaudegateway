@@ -12,8 +12,11 @@ import { ConfigStore } from '../storage/config.js';
 import { CredentialStore } from '../storage/credentials.js';
 import { DestinationsStore } from '../storage/destinations.js';
 import { ScanLog } from '../storage/scanLog.js';
+import { EventLog } from '../storage/eventLog.js';
 import { IngestPipeline } from './pipeline.js';
 import { ScanEventBus } from './scanEvents.js';
+import { EventLogBus } from '../logging/eventLogBus.js';
+import { EventLogger } from '../logging/eventLogger.js';
 import { buildServer } from './server.js';
 import { ErrorMonitor } from '../health/errorMonitor.js';
 import { HaWebhookNotifier } from '../health/haWebhook.js';
@@ -62,6 +65,7 @@ describe('ingest server (fastify.inject)', () => {
   let db: Database;
   let app: FastifyInstance;
   let credentialStore: CredentialStore;
+  let eventLog: EventLog;
 
   beforeEach(() => {
     original = getGlobalDispatcher();
@@ -76,6 +80,9 @@ describe('ingest server (fastify.inject)', () => {
     const destinations = new DestinationsStore(configStore);
     destinations.write({ cart: true, lists: [] });
     const scanLog = new ScanLog(db);
+    eventLog = new EventLog(db);
+    const eventBus = new EventLogBus();
+    const emit = new EventLogger(eventLog, eventBus).emit;
     credentialStore = new CredentialStore(db, Buffer.alloc(32));
     // Configured by default so /health runs the real checks; the not-configured case is tested below.
     credentialStore.save({ email: 'tester@example.com', password: 'pw' });
@@ -86,7 +93,7 @@ describe('ingest server (fastify.inject)', () => {
       getToken: async () => 'TOKEN',
       siteId: '1016',
     });
-    const pipeline = new IngestPipeline({ chronodrive, scanLog, destinations, events });
+    const pipeline = new IngestPipeline({ chronodrive, scanLog, destinations, events, emit });
     const errorMonitor = new ErrorMonitor();
     const haWebhook = new HaWebhookNotifier({
       getUrl: () => configStore.readAppConfig().haWebhookUrl,
@@ -99,6 +106,9 @@ describe('ingest server (fastify.inject)', () => {
       credentialStore,
       scanLog,
       events,
+      eventLog,
+      eventBus,
+      emit,
       errorMonitor,
       haWebhook,
     });
@@ -126,6 +136,19 @@ describe('ingest server (fastify.inject)', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ status: 'added', ean: EAN, product: { id: '2555' } });
+
+    // BL-003: the scan produced an ordered set of operational-log lines (not just the final outcome).
+    const scanEvents = eventLog
+      .query({ category: 'scan', page: 1, pageSize: 50 })
+      .reverse() // query is newest-first; reverse to assert chronological order
+      .map((e) => e.type);
+    expect(scanEvents).toEqual([
+      'ean_read',
+      'search_request',
+      'product_resolved',
+      'cart_write',
+      'scan_complete',
+    ]);
   });
 
   it('POST /v1/scan with an invalid EAN → 400 invalid_ean, Chronodrive untouched', async () => {

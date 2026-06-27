@@ -13,12 +13,16 @@
 import { request } from 'undici';
 import type { ErrorStateError } from '@barclaudegateway/shared';
 
+import type { EmitEvent } from '../logging/eventLogger.js';
+
 const DEFAULT_COOLDOWN_MS = 15 * 60 * 1_000;
 const WEBHOOK_TIMEOUT_MS = 5_000;
 
 export interface HaWebhookDeps {
   /** Read the configured URL lazily so config edits take effect without a restart. Empty = disabled. */
   getUrl: () => string;
+  /** Optional operational-log emit (BL-003): each webhook send/failure is journalled as `other`. */
+  emit?: EmitEvent;
   /** Injectable clock for deterministic tests. */
   now?: () => number;
   /** Minimum gap before the same incident may alert again. Defaults to 15 minutes. */
@@ -46,6 +50,7 @@ export interface HaWebhookResult {
 
 export class HaWebhookNotifier {
   private readonly getUrl: () => string;
+  private readonly emit?: EmitEvent;
   private readonly now: () => number;
   private readonly cooldownMs: number;
   private lastKey: string | undefined;
@@ -53,6 +58,7 @@ export class HaWebhookNotifier {
 
   constructor(deps: HaWebhookDeps) {
     this.getUrl = deps.getUrl;
+    this.emit = deps.emit;
     this.now = deps.now ?? Date.now;
     this.cooldownMs = deps.cooldownMs ?? DEFAULT_COOLDOWN_MS;
   }
@@ -68,7 +74,16 @@ export class HaWebhookNotifier {
     this.lastKey = key;
     this.lastFiredAt = at;
 
-    await this.post(url, this.payload(error, false));
+    const result = await this.post(url, this.payload(error, false));
+    this.emit?.({
+      category: 'other',
+      type: 'ha_alert',
+      level: result.ok ? 'info' : 'error',
+      message: result.ok
+        ? `Home Assistant alert sent (${error.category})`
+        : `Home Assistant alert failed: ${result.error ?? 'unknown error'}`,
+      detail: { category: error.category, endpoint: error.endpoint, ok: result.ok },
+    });
   }
 
   /** Send a clearly-marked sample alert for the config-page test button. Bypasses the cooldown. */

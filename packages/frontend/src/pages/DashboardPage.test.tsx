@@ -16,7 +16,9 @@ const HEALTH: HealthReport = {
 };
 
 const SCANS: ScansResponse = {
-  count: 2,
+  total: 2,
+  page: 1,
+  pageSize: 100,
   scans: [
     { id: 2, createdAt: 1000, ean: '222', outcome: 'not_found', message: 'EAN not in catalogue' },
     { id: 1, createdAt: 900, ean: '111', outcome: 'added', message: 'Added "X"' },

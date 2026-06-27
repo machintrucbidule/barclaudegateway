@@ -18,6 +18,10 @@ import { openDatabase } from './storage/db.js';
 import { ConfigStore } from './storage/config.js';
 import { createCredentialsLoader, CredentialStore } from './storage/credentials.js';
 import { ScanLog } from './storage/scanLog.js';
+import { EventLog } from './storage/eventLog.js';
+import { EventLogBus } from './logging/eventLogBus.js';
+import { EventLogger } from './logging/eventLogger.js';
+import type { EmitEvent } from './logging/eventLogger.js';
 
 export interface Services {
   db: Database;
@@ -25,6 +29,12 @@ export interface Services {
   configStore: ConfigStore;
   credentialStore: CredentialStore;
   scanLog: ScanLog;
+  /** BL-003: the bounded operational-log journal (auth/scan/system events). */
+  eventLog: EventLog;
+  /** BL-003: the live operational-log bus the `/api/events/stream` SSE route subscribes to. */
+  eventBus: EventLogBus;
+  /** BL-003: the single emit point — redact → persist → publish a {@link LogEvent}. */
+  emit: EmitEvent;
   http: HttpClient;
   auth: TokenLifecycle;
   chronodrive: ChronodriveClient;
@@ -43,6 +53,10 @@ export function createServices(env: EnvConfig, options: CreateServicesOptions = 
 
   const credentialStore = new CredentialStore(db, env.masterKey);
   const scanLog = new ScanLog(db);
+  const eventLog = new EventLog(db);
+  const eventBus = new EventLogBus();
+  const eventLogger = new EventLogger(eventLog, eventBus);
+  const emit = eventLogger.emit;
   const http = options.http ?? new HttpClient();
 
   const authConfig: AuthConfig = {
@@ -55,6 +69,7 @@ export function createServices(env: EnvConfig, options: CreateServicesOptions = 
     http,
     config: authConfig,
     loadCredentials: createCredentialsLoader(credentialStore),
+    emit,
   });
 
   const chronodrive = new ChronodriveClient({
@@ -65,5 +80,17 @@ export function createServices(env: EnvConfig, options: CreateServicesOptions = 
     ...(config.siteId ? { siteId: config.siteId } : {}),
   });
 
-  return { db, config, configStore, credentialStore, scanLog, http, auth, chronodrive };
+  return {
+    db,
+    config,
+    configStore,
+    credentialStore,
+    scanLog,
+    eventLog,
+    eventBus,
+    emit,
+    http,
+    auth,
+    chronodrive,
+  };
 }

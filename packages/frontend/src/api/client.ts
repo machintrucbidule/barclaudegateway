@@ -14,7 +14,9 @@ import type {
   DestinationsResponse,
   EnabledDestinations,
   ErrorState,
+  EventsResponse,
   HealthReport,
+  LogCategory,
   ScansResponse,
 } from '@barclaudegateway/shared';
 
@@ -23,6 +25,22 @@ export interface WebhookTestResult {
   ok: boolean;
   status?: number;
   error?: string;
+}
+
+/** Query for the searchable, paginated scan history (BL-004). */
+export interface ScansQuery {
+  page?: number;
+  /** 10 / 50 / 100 / 500, or `'all'` for every matching row. */
+  pageSize?: number | 'all';
+  status?: string;
+  search?: string;
+}
+
+/** Query for the operational-log page (BL-003). */
+export interface EventsQuery {
+  category?: LogCategory;
+  page?: number;
+  pageSize?: number;
 }
 
 /** An API call that returned a non-2xx status; `message` is the backend's `error` field when present. */
@@ -76,8 +94,24 @@ export const api = {
   deleteCredentials: (): Promise<{ credentials: { set: boolean } }> =>
     sendJson('DELETE', '/api/credentials'),
 
-  getScans: (limit?: number): Promise<ScansResponse> =>
-    getJson(limit === undefined ? '/api/scans' : `/api/scans?limit=${String(limit)}`),
+  getScans: (query: ScansQuery = {}): Promise<ScansResponse> => {
+    const params = new URLSearchParams();
+    if (query.page !== undefined) params.set('page', String(query.page));
+    if (query.pageSize !== undefined) params.set('pageSize', String(query.pageSize));
+    if (query.status) params.set('status', query.status);
+    if (query.search) params.set('search', query.search);
+    const qs = params.toString();
+    return getJson(qs ? `/api/scans?${qs}` : '/api/scans');
+  },
+
+  getEvents: (query: EventsQuery = {}): Promise<EventsResponse> => {
+    const params = new URLSearchParams();
+    if (query.category) params.set('category', query.category);
+    if (query.page !== undefined) params.set('page', String(query.page));
+    if (query.pageSize !== undefined) params.set('pageSize', String(query.pageSize));
+    const qs = params.toString();
+    return getJson(qs ? `/api/events?${qs}` : '/api/events');
+  },
 
   getHealth: (): Promise<HealthReport> => getJson('/api/health'),
 

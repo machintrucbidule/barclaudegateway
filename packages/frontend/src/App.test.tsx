@@ -5,7 +5,7 @@ import { mockFetch } from './test/fetchMock.js';
 import { renderWithProviders } from './test/renderWithProviders.js';
 
 const EMPTY_HEALTH = { ok: true, checks: [], apiVersions: {}, checkedAt: 0 };
-const EMPTY_SCANS = { count: 0, scans: [] };
+const EMPTY_SCANS = { total: 0, page: 1, pageSize: 100, scans: [] };
 
 /** The app shell subscribes to the error-state SSE stream; jsdom has no EventSource, so stub it. */
 class MockEventSource {
@@ -32,6 +32,7 @@ describe('App', () => {
 
     expect(screen.getByRole('heading', { name: 'BarclaudeGateway' })).toBeInTheDocument();
     expect(await screen.findByText('Configuration')).toBeInTheDocument();
-    expect(screen.getByText('Journal en direct')).toBeInTheDocument();
+    expect(screen.getByText('Historique des scans')).toBeInTheDocument();
+    expect(screen.getByText('Logs techniques')).toBeInTheDocument();
   });
 });

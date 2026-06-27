@@ -13,6 +13,7 @@
 
 import { LoginRequiredError } from '../http/errors.js';
 import type { HttpClient } from '../http/client.js';
+import type { EmitEvent } from '../logging/eventLogger.js';
 import type { AuthConfig, Credentials } from './login.js';
 import { performFullLogin, performSilentRefresh } from './login.js';
 import type { SessionState } from './session.js';
@@ -27,6 +28,8 @@ export interface TokenLifecycleDeps {
   loadCredentials: () => Promise<Credentials>;
   /** Optional sink called whenever the session changes (e.g. to persist the cookie in 2.2). */
   onSession?: (session: SessionState) => void;
+  /** Optional operational-log emit (BL-003): per-PKCE-step + refresh/re-login lines. */
+  emit?: EmitEvent;
   store?: SessionStore;
   skewMs?: number;
   /** Injectable clock for deterministic tests. */
@@ -38,6 +41,7 @@ export class TokenLifecycle {
   private readonly config: AuthConfig;
   private readonly loadCredentials: () => Promise<Credentials>;
   private readonly onSession?: (session: SessionState) => void;
+  private readonly emit?: EmitEvent;
   private readonly store: SessionStore;
   private readonly skewMs: number;
   private readonly now: () => number;
@@ -51,6 +55,7 @@ export class TokenLifecycle {
     this.config = deps.config;
     this.loadCredentials = deps.loadCredentials;
     this.onSession = deps.onSession;
+    this.emit = deps.emit;
     this.store = deps.store ?? new SessionStore();
     this.skewMs = deps.skewMs ?? REFRESH_SKEW_MS;
     this.now = deps.now ?? Date.now;
@@ -94,16 +99,43 @@ export class TokenLifecycle {
     let session: SessionState;
     if (current?.cookieHeader) {
       try {
-        session = await performSilentRefresh(this.http, this.config, current.cookieHeader);
+        session = await performSilentRefresh(
+          this.http,
+          this.config,
+          current.cookieHeader,
+          this.emit,
+        );
       } catch (error) {
         if (error instanceof LoginRequiredError) {
-          session = await performFullLogin(this.http, this.config, await this.loadCredentials());
+          this.emit?.({
+            category: 'auth',
+            type: 'login_required',
+            level: 'warn',
+            message: 'Reach5 session expired (login_required) — performing a full re-login',
+          });
+          session = await performFullLogin(
+            this.http,
+            this.config,
+            await this.loadCredentials(),
+            this.emit,
+          );
+          this.emit?.({
+            category: 'auth',
+            type: 'full_relogin',
+            level: 'info',
+            message: 'Full re-login complete after login_required',
+          });
         } else {
           throw error;
         }
       }
     } else {
-      session = await performFullLogin(this.http, this.config, await this.loadCredentials());
+      session = await performFullLogin(
+        this.http,
+        this.config,
+        await this.loadCredentials(),
+        this.emit,
+      );
     }
     this.store.set(session);
     this.onSession?.(session);

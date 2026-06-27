@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, screen } from '@testing-library/react';
-import type { ScanEvent } from '@barclaudegateway/shared';
+import { act, fireEvent, screen } from '@testing-library/react';
+import type { LogEvent } from '@barclaudegateway/shared';
 import { LogsPage } from './LogsPage.js';
 import { mockFetch } from '../test/fetchMock.js';
 import { renderWithProviders } from '../test/renderWithProviders.js';
@@ -17,36 +17,95 @@ class MockEventSource {
   close(): void {}
 }
 
+const emptyEvents = { events: [], total: 0, page: 1, pageSize: 200 };
+
+function logEvent(over: Partial<LogEvent>): MessageEvent<string> {
+  const base: LogEvent = {
+    id: 1,
+    at: 123,
+    category: 'auth',
+    type: 'login_complete',
+    level: 'info',
+    message: 'Full login complete',
+  };
+  return { data: JSON.stringify({ ...base, ...over }) } as MessageEvent<string>;
+}
+
 describe('LogsPage', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     MockEventSource.last = null;
   });
 
-  it('renders a scan pushed over the live stream', async () => {
-    mockFetch((url) =>
-      url.includes('/api/scans') ? { body: { count: 0, scans: [] } } : { body: {} },
-    );
+  it('renders an event pushed over the live operational-log stream', async () => {
+    mockFetch((url) => (url.includes('/api/events') ? { body: emptyEvents } : { body: {} }));
     vi.stubGlobal('EventSource', MockEventSource);
 
     renderWithProviders(<LogsPage />);
 
-    // Empty until the first event arrives.
-    expect(await screen.findByText('En attente de scans…')).toBeInTheDocument();
+    expect(await screen.findByText("En attente d'événements…")).toBeInTheDocument();
 
     const source = MockEventSource.last;
     expect(source).not.toBeNull();
-    const event: ScanEvent = {
-      at: 123,
-      response: { status: 'added', ean: '999', message: 'Added "Gros sel"' },
-    };
     act(() => {
       source?.onopen?.(new Event('open'));
-      source?.onmessage?.({ data: JSON.stringify(event) } as MessageEvent<string>);
+      source?.onmessage?.(logEvent({ message: 'Full login complete' }));
     });
 
-    expect(await screen.findByText('999')).toBeInTheDocument();
-    expect(screen.getByText('Ajouté')).toBeInTheDocument();
+    expect(await screen.findByText('Full login complete')).toBeInTheDocument();
+    expect(screen.getByText('login_complete')).toBeInTheDocument();
     expect(screen.getByText('connecté')).toBeInTheDocument();
+  });
+
+  it('shows a failing step clearly (error level)', async () => {
+    mockFetch((url) => (url.includes('/api/events') ? { body: emptyEvents } : { body: {} }));
+    vi.stubGlobal('EventSource', MockEventSource);
+
+    renderWithProviders(<LogsPage />);
+    await screen.findByText("En attente d'événements…");
+    const source = MockEventSource.last;
+    act(() => {
+      source?.onmessage?.(
+        logEvent({
+          id: 9,
+          category: 'scan',
+          type: 'search_request',
+          level: 'error',
+          message: 'Search failed: [server 500]',
+        }),
+      );
+    });
+
+    expect(await screen.findByText('Search failed: [server 500]')).toBeInTheDocument();
+    expect(screen.getByText('Erreur')).toBeInTheDocument();
+  });
+
+  it('gates the live tail by the selected category', async () => {
+    mockFetch((url) => (url.includes('/api/events') ? { body: emptyEvents } : { body: {} }));
+    vi.stubGlobal('EventSource', MockEventSource);
+
+    renderWithProviders(<LogsPage />);
+    await screen.findByText("En attente d'événements…");
+    const source = MockEventSource.last;
+    act(() => source?.onopen?.(new Event('open')));
+
+    // Restrict to Authentification.
+    fireEvent.click(screen.getByText('Authentification'));
+
+    // A scan event is now gated out…
+    act(() => {
+      source?.onmessage?.(
+        logEvent({ id: 1, category: 'scan', type: 'scan_complete', message: 'scanned' }),
+      );
+    });
+    expect(screen.queryByText('scanned')).not.toBeInTheDocument();
+
+    // …while an auth event passes the filter.
+    act(() => {
+      source?.onmessage?.(
+        logEvent({ id: 2, category: 'auth', type: 'login_complete', message: 'logged in' }),
+      );
+    });
+    expect(await screen.findByText('logged in')).toBeInTheDocument();
   });
 });

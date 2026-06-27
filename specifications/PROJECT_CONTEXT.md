@@ -1,7 +1,7 @@
 # BarclaudeGateway — Project Context
 
 > **This file is read at the start of every development step.** Keep it up to date.
-> Last updated: 2026-06-27
+> Last updated: 2026-06-27 (BATCH-3 shipped — operational logs + scan history, DECISION-018)
 
 ---
 
@@ -123,7 +123,16 @@ Auth flow (Reach5 PKCE) — **live-verified end-to-end by the middleware 2026-06
 ### Web UI
 
 - Local access only, no auth
-- Pages: Config, Dashboard, Real-time log stream, API error/maintenance page
+- Pages: Config, Dashboard, **Operational logs**, **Scan history**, API error/maintenance page
+  - **Operational logs** (technical): the exchanges with the Chronodrive auth server, the per-step detail
+    of each scan (barcode read → search request → product id found → cart/list add request → result), and
+    **every token refresh**, with errors shown clearly; **live tail**; filter Auth / Scan / Other / All.
+  - **Scan history**: a searchable, filterable, **paginated** history of scanned codes and each code's
+    status; **not** live-updated (a new scan does not auto-append).
+  - **Spec correction (2026-06-27)**: the original single "Real-time log stream" wording was ambiguous and
+    was implemented as a live *scan* stream. The intent was always **operational logs**; this is being
+    corrected — the page is split into the two above (tracked by **[BL-003]** logs + **[BL-004]** history
+    in `BACKLOG.md`). Internal journaling only — `contract.md` is unaffected.
 - **Config page = destination checkboxes** (CLARIFY-02 + 03): shows "Panier" (cart) + every shopping list (fetched dynamically via `GET /v1/shopping-lists`), each with a checkbox. A scan feeds every checked destination. Also holds credentials (write-only display) and the HA webhook URL.
 - **Not-found handling** (CLARIFY-01): log + visible alert in the UI (no manual-link screen in v1).
 - API error page must include: Firefox HAR capture tutorial + ready-to-paste Claude debug prompt (shipped in v1, CLARIFY-06).
@@ -131,9 +140,9 @@ Auth flow (Reach5 PKCE) — **live-verified end-to-end by the middleware 2026-06
 
 **Implemented in Phase 4 (DECISION-011/012/013):**
 
-- **Stack** — React 19 + Vite, **Mantine** components + **react-router** (`/config`, `/dashboard`, `/logs`). Built bundle served by Fastify (`@fastify/static`, SPA history-fallback); in dev, Vite proxies `/api` and `/v1` to the backend.
-- **API surface** (`/api`, same Fastify app as `POST /v1/scan`): `GET/PUT /config`, `GET/PUT /config/destinations`, `PUT/DELETE /credentials`, `GET /scans`, `GET /scans/stream` (SSE), `GET /health`. Shapes typed in `@barclaudegateway/shared` (`ApiConfig`, `ConfigResponse`, `DestinationsResponse`, `ScansResponse`, `ScanRecord`, `ScanEvent`).
-- **Real-time** — **SSE** over an in-process `ScanEventBus` the pipeline publishes to at every journalled outcome (DECISION-012).
+- **Stack** — React 19 + Vite, **Mantine** components + **react-router** (`/config`, `/dashboard`, `/history`, `/logs`). Built bundle served by Fastify (`@fastify/static`, SPA history-fallback); in dev, Vite proxies `/api` and `/v1` to the backend.
+- **API surface** (`/api`, same Fastify app as `POST /v1/scan`): `GET/PUT /config`, `GET/PUT /config/destinations`, `PUT/DELETE /credentials`, `GET /scans` (status/search/page/pageSize — BL-004), `GET /scans/stream` (SSE), **`GET /events`** (category filter + pagination) + **`GET /events/stream`** (SSE — BL-003), `GET /health`. Shapes typed in `@barclaudegateway/shared` (`ApiConfig`, `ConfigResponse`, `DestinationsResponse`, `ScansResponse`, `ScanRecord`, `ScanEvent`, `LogEvent`, `EventsResponse`).
+- **Real-time** — **SSE** over in-process buses (DECISION-012). The scan `ScanEventBus` still feeds the Phase-5 error monitor; **the `/logs` page is now operational logs** over a dedicated `EventLogBus` + `event_log` table (auth exchanges + per-step scan detail + token refreshes + system events, live tail, Auth/Scan/Autre/Tous filter, errors shown clearly — **BL-003 shipped 2026-06-27**), and the old live table became a **static, searchable, paginated `Historique des scans`** (**BL-004 shipped 2026-06-27**). See DECISION-018.
 - **Credentials write-only** — `PUT /api/credentials` stores them encrypted; no GET ever returns the password, only `credentials.set`. The `x-api-key`s are not secret and are returned/edited.
 - **Config page edits all static params** including a **new optional `site_id`** store-id override (empty = dynamic `lastVisitedSite.id` detection). It is the editor of the single Phase 3 `enabled_destinations` row — no second source of truth.
 - **Not-found alert** (CLARIFY-01) shipped on the dashboard.
@@ -187,6 +196,7 @@ All Phase 0 architecture decisions and functional clarifications are resolved. S
 | Docker image + GHCR release + Portainer | RESOLVED | multi-stage `node:24-slim`, public GHCR, tag-triggered, `/livez` healthcheck (DECISION-015) |
 | Unconfigured = info, not error        | RESOLVED | `not_configured` category, self-test skipped until configured, dashboard "configure me" card (DECISION-016, v0.0.2) |
 | End-to-end validation + hardening      | RESOLVED | Deployed smoke/security/resilience proven; central log redaction wired (DECISION-017, v0.0.3); maintenance loop initialized |
+| Operational event-logging + scan history | RESOLVED | Dedicated `EventLog`/`EventLogBus` + `event_log` table, `LogEvent` taxonomy, 50 000-row/10-y retention, SSE tail; scan page split into operational logs + searchable history (DECISION-018, BL-003/004) |
 
 ---
 
