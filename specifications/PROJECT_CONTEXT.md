@@ -42,8 +42,10 @@ barclaudegateway/
 > workflow (`.github/workflows/release.yml`, tag-triggered) + a no-push PR build check
 > (`docker-build.yml`), the Portainer stack (`deploy/stack.yml`), and `docs/deployment.md`
 > (Phase 6, DECISION-015). Docker is still never built or tested on Windows — only CI builds it.
-> The version started at **0.0.1**; **current published version is `0.0.3`** (DECISION-017, the
-> Phase 7 log-redaction hardening fix; v0.0.2 was DECISION-016).
+> The version started at **0.0.1**; **current published version is `0.0.4`** (adds the ESPHome
+> scanner firmware `firmware/esphome/barclaude-scanner.yaml` + a version-controlled prod-deploy
+> script; **no middleware code change vs `0.0.3`**, which shipped the DECISION-017 log-redaction
+> hardening fix; v0.0.2 was DECISION-016).
 > Local dev/test on Windows uses `scripts/windows/` (start/stop/reset-db) — the Node toolchain only.
 
 ---
