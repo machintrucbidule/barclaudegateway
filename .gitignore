@@ -23,6 +23,10 @@ coverage/
 # DB and the generated test master key. NEVER commit (the key is a secret).
 .testdata/
 
+# Local secrets for deploy_prod.bat (the Watchtower API token). The versioned
+# deploy_prod.bat sources this companion file at run time. NEVER commit it.
+scripts/windows/deploy_prod.secret.bat
+
 # Logs
 *.log
 npm-debug.log*
