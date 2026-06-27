@@ -66,11 +66,13 @@ function buildDebugPrompt(error: ErrorStateError | undefined): string {
     '2. Puis le code du middleware pour coller au nouveau contrat, et re-vérifie les autres endpoints.',
     '3. Garde tous les contrôles verts : npm run lint && npm run format:check && npm run typecheck && npm run test && npm run build.',
     '',
-    'Trace enfin l’incident dans le backlog (schéma d’entrée du projet) : ajoute une entrée P0 dans specifications/BACKLOG.md (crée le fichier depuis le schéma s’il n’existe pas encore) :',
+    'Trace enfin l’incident dans le backlog : ajoute une entrée P0 dans specifications/BACKLOG.md en suivant son schéma d’entrée :',
     '- [BL-NNN] Titre court à l’impératif — Type: Bug — Priority: P0 — Status: In progress — Source: incident (horodatage ci-dessus)',
     '- Spec impact: contract.md §X — Affected files: <chemins touchés> — Description: symptôme + cause racine',
     '- Change to make: la correction concrète — Acceptance criteria: comment vérifier que c’est réglé',
     'Une fois la correction livrée, déplace l’entrée vers specifications/BACKLOG_ARCHIVE.md (date, ce qui a été fait, référence commit/PR + tag image).',
+    '',
+    'Ce prompt est le point d’entrée « incident » de la boucle de maintenance du projet ; la revue périodique de l’API et le rangement du backlog se lancent, eux, via specifications/prompts/loop-3-ops-grooming.md.',
   ].join('\n');
 }
 

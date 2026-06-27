@@ -372,6 +372,74 @@
 
 ---
 
+## Resolved — End-to-end validation & hardening (Phase 7)
+
+### [DECISION-017] Phase 7 validation outcomes, the redaction hardening fix, and the maintenance-loop handoff
+
+- **Date**: 2026-06-27
+- **Question**: Does the **deployed** system (the published GHCR image on the homelab Portainer stack)
+  work end-to-end on the real Chronodrive API, is it secure and resilient enough for an always-on
+  homelab service, and what — if anything — must be fixed before the project is accepted and handed
+  off to the iterative maintenance loop?
+- **Campaign** (run 2026-06-27 against `0.0.2` on the real Portainer stack; full report in
+  [`docs/validation/phase-7-validation.md`](../docs/validation/phase-7-validation.md)):
+  - **Smoke** — first run with no credentials behaved as DECISION-016 specifies (`/livez` 200,
+    `/api/health` `configured:false` with no upstream call, dashboard "configure me" card, no error
+    banner). After saving credentials the live self-test passed all four confirmed endpoints with
+    matching `x-api-version` values (**no contract drift**). All three targeted `ScanResponse` states
+    were proven live via `POST /v1/scan`: `added` (cart + list), `added_to_lists_only` (`NO_STOCK` →
+    lists only, cart skipped — CLARIFY-08), and `not_found` (UPC-A normalized to EAN-13). Credentials
+    are write-only (`/api/config` never returns the password).
+  - **Security** — credentials AES-256-GCM at rest (wrong key fails closed); HA webhook payload
+    secret-free; no secret baked in the image (`.dockerignore` + Dockerfile); container runs non-root
+    (`uid=1000(node)`) with `node`-owned `/data`.
+  - **Resilience** — state (config + scan journal) survives both a container **restart** and a full
+    **Recreate** (what a Watchtower image update does), because the only state lives on the `appdata`
+    named volume.
+  - **Live-call discipline** — the whole campaign used the minimal real calls needed (one self-test +
+    three scans on the user's own account); the ESP32 module had not arrived, so physical scans were
+    substituted with HTTP calls.
+- **Decisions taken** (each surfaced to the user, who chose):
+  - **Hardening fix → image `v0.0.3`**: `redactSecrets` was implemented and tested but wired into no
+    log path, and a comment in `http/errors.ts` overstated reality. No active leak existed (Fastify's
+    defaults log only method/url/status; the Chronodrive client never logs its bearer token), but the
+    guarantee rested on "never log the wrong object." Fixed by wiring a new `redactLogObject` helper as
+    the Fastify logger's `formatters.log` hook, so **every** log record (headers, bodies, serialized
+    errors — present or future) is deep-redacted centrally; the misleading comment was corrected and a
+    request-shaped redaction test added. The user chose to wire it (over fixing only the comment).
+  - **Backup docs corrected for WAL mode**: the DB runs in SQLite WAL mode (`-wal`/`-shm` alongside the
+    `.sqlite`), so copying only the `.sqlite` file can lose recent writes. `docs/deployment.md` now
+    documents a WAL-safe backup (online `VACUUM INTO`, or stop-then-copy-all-three) and a restore
+    procedure, and the stale `0.0.1` pin/release examples were updated to `0.0.3`.
+  - **Deferred to the backlog**: physical ESP32 LED/buzzer validation (**[BL-001]**, P1) until the
+    module arrives; **assisted master-key generation on first run** (**[BL-002]**, P2) — print a
+    generated key once to logs with copy-and-restart instructions, never writing it to disk (refines,
+    does not reverse, the env-injected key model of DECISION-008).
+  - **Maintenance-loop handoff**: created `specifications/BACKLOG.md` (seeded with BL-001/BL-002) and
+    `specifications/BACKLOG_ARCHIVE.md`, and extracted the three reusable loop prompts into standalone
+    files under `specifications/prompts/` (`loop-1-intake-triage.md`, `loop-2-develop-batch.md`,
+    `loop-3-ops-grooming.md`). The Phase 5 maintenance page's diagnostic prompt already routes a
+    detected Chronodrive breakage into `BACKLOG.md` as a P0 Bug (Source: incident), so the
+    detect-and-patch loop is wired end to end.
+  - **Maintenance-page prompt tidied** (ships in v0.0.3): `MaintenancePage.tsx` `buildDebugPrompt` no
+    longer says "create `BACKLOG.md` if it doesn't exist" (it now does), and gained a one-line pointer
+    noting it is the **incident** entry-point of the maintenance loop, while the periodic
+    re-verification/grooming runs via `specifications/prompts/loop-3-ops-grooming.md`. The page prompt
+    stays incident-specific (prefilled with the live `category`/`endpoint`/`message`/`x-api-version`/
+    timestamp) and is deliberately **not** replaced by the generic loop-3 prompt.
+- **Decided by**: User (Ivan) — the redaction fix (wire vs comment-only) and the BL-002 backlog item
+  chosen explicitly; the doc corrections and loop-prompt extraction presented and approved.
+- **Rationale**: The deployed system is validated against reality; the one gap found was a latent
+  defense-in-depth weakness, now closed without changing the `BCG_*` contract or the
+  single-process/single-origin model; honest backup docs prevent silent data loss; and the project
+  exits the numbered-phase model into a clean, ready-to-run maintenance loop.
+- **Acceptance**: **Accepted for everyday use on 2026-06-27** by the user (Ivan) at the Phase 7
+  validation gate. This is the final build phase — the project is complete and hands off to the
+  iterative maintenance loop (`BACKLOG.md` + the three loop prompts); no Phase 8 prompt is generated.
+  The hardening fix ships as image **v0.0.3**.
+
+---
+
 ## Cross-cutting consequences for later phases
 
 - **Phase 3** must define a **rich HTTP response contract** (multiple distinct states: success / not-found / ineligible / out-of-stock / API error) so ESPHome can drive LED colors + buzzer (CLARIFY-04).

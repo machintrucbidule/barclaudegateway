@@ -1,7 +1,7 @@
 # BarclaudeGateway — Project Context
 
 > **This file is read at the start of every development step.** Keep it up to date.
-> Last updated: 2026-06-26
+> Last updated: 2026-06-27
 
 ---
 
@@ -29,7 +29,9 @@ barclaudegateway/
     frontend/                    ← @barclaudegateway/frontend: React + Vite web UI (Phase 4+)
   docs/dev-setup.md              ← reproducible Windows dev-environment steps
   .github/workflows/ci.yml       ← checks-only CI (lint + format + typecheck + test + build)
-  package.json                   ← workspace root (private, version 0.0.1, aggregated scripts)
+    BACKLOG.md                   ← active maintenance backlog (post-Phase 7 loop)
+    BACKLOG_ARCHIVE.md           ← append-only shipped-items history
+  package.json                   ← workspace root (private, version 0.0.3, aggregated scripts)
   tsconfig.base.json             ← shared TypeScript compiler options
   eslint.config.js               ← ESLint flat config
   .prettierrc.json / .editorconfig / .gitattributes / .npmrc
@@ -40,7 +42,8 @@ barclaudegateway/
 > workflow (`.github/workflows/release.yml`, tag-triggered) + a no-push PR build check
 > (`docker-build.yml`), the Portainer stack (`deploy/stack.yml`), and `docs/deployment.md`
 > (Phase 6, DECISION-015). Docker is still never built or tested on Windows — only CI builds it.
-> The version started at **0.0.1**; **current published version is `0.0.2`** (DECISION-016).
+> The version started at **0.0.1**; **current published version is `0.0.3`** (DECISION-017, the
+> Phase 7 log-redaction hardening fix; v0.0.2 was DECISION-016).
 > Local dev/test on Windows uses `scripts/windows/` (start/stop/reset-db) — the Node toolchain only.
 
 ---
@@ -141,6 +144,25 @@ Auth flow (Reach5 PKCE) — **live-verified end-to-end by the middleware 2026-06
 - **Home Assistant alert** (CLARIFY-05) — `HaWebhookNotifier` POSTs a **secret-free** payload to the configured webhook **once per incident** (15-min cooldown) on a new critical error; no-op when unset. A **"Tester le webhook"** button on the config page (`POST /api/notify/test`) sends a sample.
 - **New config key `ha_webhook_url`** (empty by default) added to `AppConfig`/`ApiConfig`/`ConfigResponse` and the `config` table, edited in the config page's "Alerte Home Assistant" section — the single new field, mirroring the Phase 4 `site_id` addition.
 
+**Validated & hardened in Phase 7 (DECISION-017):**
+
+- **End-to-end on the real deployment** (Portainer stack, real Chronodrive API, 2026-06-27): the
+  unconfigured first run is informational (DECISION-016), configuration brings it online with no
+  contract drift, and the three `ScanResponse` states (`added` / `added_to_lists_only` / `not_found`)
+  were proven live. Full report: `docs/validation/phase-7-validation.md`.
+- **Hardening fix (v0.0.3)** — `redactSecrets` is now wired centrally as the Fastify logger's
+  `formatters.log` hook (`logging/redact.ts` `redactLogObject` + `ingest/server.ts`), so every log
+  record is deep-redacted. No `BCG_*`/architecture change.
+- **Backup model documented for WAL** — `docs/deployment.md` now has WAL-safe backup/restore steps
+  (the DB carries `-wal`/`-shm`; copying only the `.sqlite` can lose recent writes).
+- **Maintenance loop initialized** — `specifications/BACKLOG.md` + `BACKLOG_ARCHIVE.md` and the three
+  standalone loop prompts in `specifications/prompts/` drive all post-Phase-7 work. Deferred items:
+  **[BL-001]** physical ESP32 validation (module not yet received), **[BL-002]** assisted master-key
+  generation on first run.
+- **✅ ACCEPTED 2026-06-27** — the user accepted the system for everyday use at the Phase 7 gate. The
+  numbered build phases (0–7) are complete; the project is now driven by the iterative maintenance
+  loop. No Phase 8.
+
 ---
 
 ## Architecture: OPEN — none
@@ -162,6 +184,7 @@ All Phase 0 architecture decisions and functional clarifications are resolved. S
 | Error detection + HA alert + HAR page | RESOLVED | `ErrorMonitor`, `/maintenance`, `ha_webhook_url` (DECISION-014) |
 | Docker image + GHCR release + Portainer | RESOLVED | multi-stage `node:24-slim`, public GHCR, tag-triggered, `/livez` healthcheck (DECISION-015) |
 | Unconfigured = info, not error        | RESOLVED | `not_configured` category, self-test skipped until configured, dashboard "configure me" card (DECISION-016, v0.0.2) |
+| End-to-end validation + hardening      | RESOLVED | Deployed smoke/security/resilience proven; central log redaction wired (DECISION-017, v0.0.3); maintenance loop initialized |
 
 ---
 

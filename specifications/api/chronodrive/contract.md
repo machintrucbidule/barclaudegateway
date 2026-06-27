@@ -2,7 +2,7 @@
 
 **Document version:** 1.4.2
 **Spec status:** Draft
-**Last full verification:** 2026-06-26
+**Last full verification:** 2026-06-26 (re-verified live 2026-06-27, Phase 7 — confirmed endpoints unchanged, `x-api-version` values identical)
 **Auth flow live-verified:** 2026-06-26 — full login (Steps 1+2+3) **and** silent refresh (Steps 2+3) executed end-to-end against production by the middleware (not just a browser HAR).
 **Primary source:** HAR captures from browser session (Firefox 152, authenticated) + live middleware run
 **Maintainer:** Ivan Calmels
@@ -711,6 +711,10 @@ Observed API versions as of 2026-06-26:
 - `/v1/customers/me/carts`: `1.9.0`
 - `/v1/carts/{cartId}/items`: `1.9.0`
 - `/v1/shopping-lists/{listId}`: `1.5.0`
+
+**Re-verified live 2026-06-27 (Phase 7, deployed middleware self-test):** all four probed endpoints
+returned the same `x-api-version` values — `/v1/customers/me` `1.4.0`, `/v1/search-suggestions`
+`1.38.1`, `/v1/customers/me/carts` `1.9.0`, `/v1/shopping-lists` `1.5.0`. No drift.
 
 ---
 

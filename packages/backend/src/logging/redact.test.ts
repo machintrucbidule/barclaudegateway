@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { redactSecrets } from './redact.js';
+import { redactLogObject, redactSecrets } from './redact.js';
 
 describe('redactSecrets', () => {
   it('masks secret keys at any depth', () => {
@@ -37,5 +37,25 @@ describe('redactSecrets', () => {
     expect(redactSecrets('plain')).toBe('plain');
     expect(redactSecrets(42)).toBe(42);
     expect(redactSecrets(null)).toBe(null);
+  });
+});
+
+describe('redactLogObject (Fastify logger hook)', () => {
+  it('masks secrets in a request-shaped log record', () => {
+    const record = {
+      level: 30,
+      msg: 'incoming request',
+      req: {
+        method: 'POST',
+        url: '/v1/scan',
+        headers: { authorization: 'Bearer xyz', cookie: 'chronosession=abc', host: 'gw.local' },
+      },
+    };
+    const out = redactLogObject(record) as typeof record;
+    expect(out.req.headers.authorization).toBe('[REDACTED]');
+    expect(out.req.headers.cookie).toBe('[REDACTED]');
+    expect(out.req.headers.host).toBe('gw.local');
+    expect(out.req.url).toBe('/v1/scan');
+    expect(out.msg).toBe('incoming request');
   });
 });

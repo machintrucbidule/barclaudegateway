@@ -3,7 +3,9 @@
  *
  * Every error carries a {@link ErrorCategory} so Phase 5 can route it to a maintenance-page state
  * or a Home Assistant alert without re-parsing messages. Construction never embeds secrets — callers
- * build messages from safe metadata only (status, endpoint), redacting bodies via `redactSecrets`.
+ * build messages from safe metadata only (status, endpoint) and never interpolate response bodies.
+ * As a backstop, anything that does reach the logger is masked centrally by `redactSecrets` (wired
+ * into the Fastify logger in `buildServer`).
  */
 
 import type { ErrorCategory } from '@barclaudegateway/shared';

@@ -21,7 +21,7 @@ built UI, dependencies) is rebuildable from a tag.
 - **Visibility:** public — Portainer/Watchtower pull it with **no registry credentials**.
 - **Tags** (published from a `vX.Y.Z` git tag): the exact `X.Y.Z` (immutable, reproducible), the
   moving `X.Y` (follows patch releases), and `latest` (newest stable release).
-  - Pin `BCG_TAG=0.0.1` for a fixed, reproducible deployment.
+  - Pin `BCG_TAG=0.0.3` for a fixed, reproducible deployment (current latest stable).
   - Use `latest` (the default) to let Watchtower auto-update on each new release.
 - **Base:** `node:24-slim`, runs as the non-root `node` user (uid/gid 1000).
 - **Listens on** container port **8090**.
@@ -47,7 +47,7 @@ openssl rand -hex 32
 1. In Portainer: **Stacks → Add stack**, paste [`deploy/stack.yml`](../deploy/stack.yml).
 2. In the stack's **Environment variables**, set:
    - `BCG_MASTER_KEY` — the value from `openssl rand -hex 32` (required).
-   - `BCG_TAG` — `latest` (auto-update) or a pinned version like `0.0.1` (optional).
+   - `BCG_TAG` — `latest` (auto-update) or a pinned version like `0.0.3` (optional).
    - `BCG_PORT` — the host port to publish, if not `8090` (optional).
 3. Deploy. The container starts, creates the SQLite DB on first boot, and serves the UI on the
    published port. Finish setup (Chronodrive login, destinations) in the web UI.
@@ -73,7 +73,35 @@ docker compose -f deploy/stack.yml up -d
   the `node` (uid 1000) ownership baked into the image, so the non-root process can write.
 - If you instead **bind-mount a host directory** to `/data`, Docker does not change its ownership —
   `chown 1000:1000 <hostdir>` first, or the container can't write the DB.
-- Back up by copying the SQLite file out of the volume (and keep `BCG_MASTER_KEY` somewhere safe).
+
+## Backup and restore
+
+The database runs in **SQLite WAL mode**: `/data` holds three files —
+`barclaudegateway.sqlite`, `barclaudegateway.sqlite-wal`, and `barclaudegateway.sqlite-shm`. Recent
+writes live in the `-wal` file until they are checkpointed, so **copying only the `.sqlite` file can
+lose your latest changes**. Back up the whole DB consistently, one of two ways:
+
+```sh
+# Option A (recommended): a consistent single-file snapshot via SQLite's online backup.
+docker exec <container> sh -c \
+  'node -e "const {DatabaseSync}=require(\"node:sqlite\"); new DatabaseSync(\"/data/barclaudegateway.sqlite\").exec(\"VACUUM INTO \\\"/data/backup.sqlite\\\"\")"'
+docker cp <container>:/data/backup.sqlite ./barclaudegateway-backup.sqlite
+
+# Option B: stop the container first (so the WAL is checkpointed and quiescent), then copy all three.
+docker stop <container>
+docker cp <container>:/data/barclaudegateway.sqlite     ./
+docker cp <container>:/data/barclaudegateway.sqlite-wal ./   # may be absent after a clean stop
+docker cp <container>:/data/barclaudegateway.sqlite-shm ./   # may be absent after a clean stop
+docker start <container>
+```
+
+Keep `BCG_MASTER_KEY` somewhere safe **alongside** the backup — without it the encrypted credentials
+in the DB are unreadable (that separation is the whole point; see "The only state to back up").
+
+**Restore:** stop the container, copy the backed-up file(s) back into the volume as
+`barclaudegateway.sqlite` (a single-file snapshot from Option A needs no `-wal`/`-shm`), ensure they
+are owned by `node` (`chown 1000:1000`), set the **same** `BCG_MASTER_KEY` as when the backup was
+made, and start the container.
 
 ## Health and restart
 
@@ -89,11 +117,12 @@ docker compose -f deploy/stack.yml up -d
 Releases are built only by CI. To publish a new version:
 
 ```sh
-# bump the version in package.json (app starts at 0.0.1), commit, then:
-git tag v0.0.1
-git push origin v0.0.1
+# bump the version in the root package.json, commit, then (example for 0.0.3):
+git tag v0.0.3
+git push origin v0.0.3
 ```
 
 The tag triggers `.github/workflows/release.yml`, which builds the image on a Linux runner and pushes
-`0.0.1`, `0.0`, and `latest` to GHCR. Routine pushes/PRs only run the checks pipeline (and, when the
-Dockerfile changes, a no-push build check) — they never publish.
+the exact `X.Y.Z`, the moving `X.Y`, and `latest` to GHCR. Routine pushes/PRs only run the checks
+pipeline (and, when the Dockerfile changes, a no-push build check) — they never publish. Current
+latest stable: **0.0.3**.

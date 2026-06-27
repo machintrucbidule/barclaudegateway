@@ -18,6 +18,7 @@ import fastifyStatic from '@fastify/static';
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ScanResponse, ScanStatus } from '@barclaudegateway/shared';
 import { runHealthSelfTest } from '../health/selfTest.js';
+import { redactLogObject } from '../logging/redact.js';
 import { apiRoutes } from '../http/apiRoutes.js';
 import type { ApiDeps } from '../http/apiRoutes.js';
 import { validateEan } from './ean.js';
@@ -51,7 +52,13 @@ function statusToHttp(status: ScanStatus): number {
 }
 
 export function buildServer(deps: ServerDeps, options: ServerOptions = {}): FastifyInstance {
-  const app = Fastify({ logger: options.logger ?? false });
+  // Defense in depth (contract.md §8): every log record is deep-redacted via `redactLogObject`, so a
+  // secret in any logged structure (headers, bodies, serialized errors) is masked even if a caller
+  // forgets. Today nothing logs secrets — Fastify's defaults log only method/url/status — but this
+  // keeps that guarantee from depending on never logging the wrong object.
+  const app = Fastify({
+    logger: (options.logger ?? false) ? { formatters: { log: redactLogObject } } : false,
+  });
 
   // Error shaping is endpoint-specific: the scanner endpoints always get a parseable ScanResponse
   // (the firmware drives its LED/buzzer from `status`), while the `/api` UI routes get plain JSON.

@@ -1,9 +1,11 @@
 /**
  * Secret redaction (contract.md §8).
  *
- * Tokens, passwords, cookies and PKCE material must never reach a log or an error message. Every
- * structure that might be logged is passed through {@link redactSecrets} first, which deep-clones it
- * and masks the value of any sensitive key.
+ * Tokens, passwords, cookies and PKCE material must never reach a log or an error message. The
+ * Fastify logger runs {@link redactLogObject} on every log record (wired in `buildServer`), so any
+ * sensitive key in a logged structure — headers, bodies, serialized errors — is masked centrally,
+ * even if a future caller forgets. {@link redactSecrets} does the work: it deep-clones the input and
+ * masks the value of any sensitive key.
  */
 
 const MASK = '[REDACTED]';
@@ -49,4 +51,12 @@ export function redactSecrets<T>(value: T, seen: WeakSet<object> = new WeakSet()
     out[key] = isSecretKey(key) ? MASK : redactSecrets(val, seen);
   }
   return out as T;
+}
+
+/**
+ * Pino `formatters.log` hook: deep-redact every log record before it is written. Wired into the
+ * Fastify logger in `buildServer` so secrets are masked centrally — no per-call discipline required.
+ */
+export function redactLogObject(object: Record<string, unknown>): Record<string, unknown> {
+  return redactSecrets(object);
 }
