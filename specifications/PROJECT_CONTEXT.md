@@ -1,8 +1,8 @@
 # BarclaudeGateway — Project Context
 
 > **This file is read at the start of every development step.** Keep it up to date.
-> Last updated: 2026-06-27 (BATCH-4 — BL-005 resolved by investigation: duplicate list-add is an
-> idempotent 204, so an already-listed product is already green `added`; no code change, DECISION-019)
+> Last updated: 2026-06-27 (BATCH-1 — BL-001: ESP32 hardware validated; scanner firmware is LED-only +
+> Home-Assistant-integrated, DECISION-020. All phases + both deferred Phase-7 items now closed)
 
 ---
 
@@ -121,10 +121,12 @@ Auth flow (Reach5 PKCE) — **live-verified end-to-end by the middleware 2026-06
 
 ### ESP32 / ESPHome side
 
-- Hardware: ESP32 + GM65 or GM861 UART barcode scanner
+- Hardware: **ESP32-C6 + GM861S** UART barcode scanner + a single WS2812 LED (validated on real
+  hardware, BL-001, 2026-06-27).
 - ESPHome handles scanner, sends EAN code to middleware over local network
-- **Protocol: HTTP POST** (DECISION-001). Synchronous HTTP response carries the scan result so ESPHome drives LED + buzzer feedback (CLARIFY-04). Trade-off accepted: a scan during app downtime is lost (no queue).
-- **Physical feedback: LED + buzzer** (CLARIFY-04). Middleware returns a status detailed enough to distinguish multiple states; ESPHome maps colors + buzzer. **Finalized in Phase 3 (DECISION-010):** endpoint `POST /v1/scan { ean }` → rich `ScanResponse` with `status` ∈ `added` / `added_to_lists_only` (+reason) / `duplicate_ignored` / `not_found` / `partial` / `error` (+category) / `invalid_ean`. Firmware-facing mapping (states → LED colour + buzzer pattern, request/response examples) in `docs/esphome-contract.md`; shared types in `@barclaudegateway/shared`.
+- **Protocol: HTTP POST** (DECISION-001). Synchronous HTTP response carries the scan result so ESPHome drives the LED feedback (CLARIFY-04). Trade-off accepted: a scan during app downtime is lost (no queue).
+- **Physical feedback: LED-only** (DECISION-020 — the buzzer of CLARIFY-04 was dropped). White while the request is in flight, then the result colour ~1.5 s: green = `added`/`duplicate_ignored`, orange = `added_to_lists_only`/`partial`, red = `not_found`/`invalid_ean`/`error`/no-response. **Finalized in Phase 3 (DECISION-010):** endpoint `POST /v1/scan { ean }` → rich `ScanResponse` with `status` ∈ `added` / `added_to_lists_only` (+reason) / `duplicate_ignored` / `not_found` / `partial` / `error` (+category) / `invalid_ean`. Firmware-facing mapping (states → LED colour, request/response examples) in `docs/esphome-contract.md`; shared types in `@barclaudegateway/shared`.
+- **Home-Assistant-integrated** (DECISION-020): encrypted HA API + a manual-EAN input & "resend" button (same `POST /v1/scan` pipeline as a physical scan) + `last_ean`/`last_status` sensors. Reference firmware: `firmware/esphome/barclaude-scanner.yaml`.
 
 ### Web UI
 

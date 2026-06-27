@@ -2,7 +2,7 @@
 
 > Decisions are added here as they are resolved. Each entry records: the question, the options considered, the choice made, and who decided.
 > All Phase 0 functional clarifications (CLARIFY-_) and architecture decisions (DECISION-_) are now resolved.
-> Last updated: 2026-06-27 (DECISION-019 — BL-005 resolved by investigation: duplicate list-add is an idempotent 204, already green, no distinct signal built, BATCH-4)
+> Last updated: 2026-06-27 (DECISION-020 — scanner firmware is LED-only + Home-Assistant-integrated, validated on real ESP32 hardware, BATCH-1/BL-001)
 
 ---
 
@@ -539,6 +539,42 @@
   finding, per the contract's "Source traceability" principle. It is read-mostly and self-restoring;
   not run in CI.
 - **Shipped in**: BATCH-4 (loop prompt 2, 2026-06-27). Full entry in `BACKLOG_ARCHIVE.md`.
+
+---
+
+### [DECISION-020] Scanner firmware is LED-only and Home-Assistant-integrated (BATCH-1 / BL-001)
+
+- **Date**: 2026-06-27
+- **Question**: BL-001 validates the ESPHome scanner on real hardware (ESP32-C6 + GM861S, received
+  2026-06-27). Two firmware choices surfaced: (1) the physical feedback — originally specified as
+  "LED **+ buzzer**, sound only on failure" (CLARIFY-04 / DECISION-001); (2) whether to expose the
+  scanner to Home Assistant.
+- **Decisions** (user):
+  - **LED-only feedback** — the buzzer is **dropped** from the reference build. The WS2812 lights
+    **white while a scan is in flight**, then holds the result colour for ~1.5 s: **green** =
+    `added` / `duplicate_ignored`; **orange** = `added_to_lists_only` / `partial`; **red** =
+    `not_found` / `invalid_ean` / `error` / no-response. This **refines** CLARIFY-04 / DECISION-001
+    (which said "LED + buzzer") — the `ScanResponse` `status` contract is unchanged, only the sound is
+    removed.
+  - **Home-Assistant integration** — the firmware exposes an encrypted HA API with a manual-EAN `text`
+    input + a "resend" `button` (both push through the **same** `POST /v1/scan` pipeline as a physical
+    scan) and `last_ean` / `last_status` `text_sensor`s.
+- **On-hardware validation** (BL-001): physical scans drive the LED per the mapping and each scan is
+  recorded in the dashboard (**Historique des scans** + **Logs techniques**) and the HA `last_status`
+  sensor. An early observation — an out-of-stock product looking **red** — was **not** a middleware bug:
+  the operational logs proved the correct `added_to_lists_only` (`product_resolved` →
+  `cart_write: skipped (out_of_stock)` → `list_write` → `scan_complete: added_to_lists_only`). The cause
+  was the **orange LED value**: the initial `(255, 80, 0)` renders too red on the WS2812; it was tuned to
+  **`(255, 185, 10)`** (amber), which reads unambiguously as orange. (Final per-state results recorded in
+  `BACKLOG_ARCHIVE.md`.)
+- **Decided by**: User (Ivan).
+- **Rationale**: a single LED is enough feedback for the bench setup and removes the buzzer's
+  noise/wiring; HA integration makes the scanner observable and testable without the physical scanner.
+  The middleware `ScanResponse` contract is untouched.
+- **Scope**: **firmware + docs only** (`firmware/esphome/barclaude-scanner.yaml`,
+  `docs/esphome-contract.md`); no middleware/app code change. The firmware is not part of the Docker
+  image, so **no app version bump**.
+- **Shipped in**: BATCH-1 (loop prompt 2, 2026-06-27). Full entry in `BACKLOG_ARCHIVE.md`.
 
 ---
 

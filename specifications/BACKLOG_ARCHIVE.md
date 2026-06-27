@@ -6,7 +6,42 @@
 >
 > Newest entries on top. Nothing here is active work — the active backlog is [`BACKLOG.md`](./BACKLOG.md).
 >
-> Last updated: 2026-06-27 (BATCH-4 closed by investigation — BL-005)
+> Last updated: 2026-06-27 (BATCH-1 — BL-001 ESP32 hardware validation shipped; backlog now empty)
+
+---
+
+## BATCH-1 — Hardware validation (P1) — shipped 2026-06-27
+
+> Developed via loop prompt 2 on branch `feature/batch-1-hardware-validation`. Reference scanner
+> firmware reconciled to **LED-only + Home-Assistant-integrated** and validated on real hardware.
+> Recorded as **DECISION-020**. No middleware/app change; firmware is not in the Docker image, so no
+> version bump.
+
+### [BL-001] Validate the full scan flow on real ESP32 hardware
+
+- Type: Evolution · Priority: P1 · Batch: BATCH-1 · Source: verification check (Phase 7, 2026-06-27)
+- **Date shipped**: 2026-06-27
+- **What was actually done**:
+  - The ESP32-C6 + GM861S arrived and the firmware was validated on real hardware. The reference
+    `firmware/esphome/barclaude-scanner.yaml` was reconciled to the user's working config:
+    **buzzer removed** (LED-only — `output:`/`error_beep`/all beeps gone), a **white in-flight LED**,
+    **Home-Assistant integration** (encrypted API + manual-EAN `text` + "resend" `button` +
+    `last_ean`/`last_status` `text_sensor`s), `request_headers:` (newer ESPHome syntax), and `!secret`
+    WiFi/AP/OTA/API hygiene.
+  - **Status → LED** (validated): white in-flight; **green** = `added`/`duplicate_ignored`; **orange** =
+    `added_to_lists_only`/`partial`; **red** = `not_found`/`invalid_ean`/`error`/no-response.
+  - **Anomaly found & fixed on hardware**: an out-of-stock product looked **red**. The operational logs
+    proved the middleware was correct (`scan_complete: added_to_lists_only`); the cause was the **orange
+    LED value** — `(255, 80, 0)` renders too red on the WS2812, **tuned to `(255, 185, 10)`** (amber).
+    Not a middleware bug.
+  - Docs/specs updated: `docs/esphome-contract.md` (LED-only feedback table + white in-flight + HA
+    section + updated sketch), **DECISION-020** in `decisions.md`, `PROJECT_CONTEXT.md` ESP32 section,
+    and the `README.md` diagram (LED, no buzzer). The `ScanResponse` contract is unchanged.
+- **Acceptance criteria — met** (adapted to LED-only per DECISION-020): each scan state, triggered
+  physically (and/or via the HA manual-EAN input), shows the expected LED colour and a matching entry in
+  **Historique des scans** + **Logs techniques** + the HA `last_status` sensor; the YAML and
+  `docs/esphome-contract.md` reflect the firmware's real behaviour. The buzzer half of the original
+  criterion was dropped (LED-only). **User-accepted on hardware 2026-06-27.**
 
 ---
 

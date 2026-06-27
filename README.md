@@ -11,7 +11,7 @@ shopping lists. A local web UI handles configuration and monitoring.
 
 ```
 ESP32 + barcode scanner ──HTTP POST──▶ BarclaudeGateway ──▶ Chronodrive private API
-   (ESPHome, LED/buzzer)                 (this app)             (cart & shopping lists)
+   (ESPHome, status LED)                 (this app)             (cart & shopping lists)
                                               │
                                               ▼
                                     Local web UI (config, dashboard, live logs)

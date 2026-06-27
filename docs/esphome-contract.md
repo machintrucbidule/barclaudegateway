@@ -1,12 +1,14 @@
 # ESPHome ↔ BarclaudeGateway — Ingestion HTTP Contract
 
 **Audience:** the ESP32/ESPHome firmware author.
-**Status:** Phase 3 (DECISION-001, DECISION-009, CLARIFY-04). Shared response types live in
+**Status:** Phase 3 (DECISION-001, DECISION-009, CLARIFY-04); feedback is **LED-only** (DECISION-020 —
+the buzzer was dropped) and **validated on real hardware** (BL-001). Shared response types live in
 `@barclaudegateway/shared` (`ScanResponse`); this doc is the firmware-facing view.
 
 The ESP32 scans a barcode and sends it to the middleware over the local network. The middleware
-answers **synchronously** with a JSON body rich enough to drive a LED colour + a buzzer pattern
-**without any app change** — the firmware switches on the `status` field first.
+answers **synchronously** with a JSON body rich enough to drive a **LED colour** **without any app
+change** — the firmware switches on the `status` field first. The reference build uses a single WS2812
+LED (no buzzer).
 
 ---
 
@@ -49,20 +51,26 @@ Content-Type: application/json
 }
 ```
 
-**Drive feedback from `status`.** The HTTP code is secondary (see the last column).
+**Drive feedback from `status`.** The HTTP code is secondary (see the last column). Feedback is
+**LED-only** — the reference firmware lights the WS2812 **white while the request is in flight**, then
+holds the result colour for ~1.5 s.
 
-| `status`              | Meaning                                                       | Suggested LED      | Suggested buzzer            | HTTP |
-| --------------------- | ------------------------------------------------------------- | ------------------ | --------------------------- | ---- |
-| `added`               | Found, orderable, written to every enabled destination        | Green              | 1 short beep                | 200  |
-| `added_to_lists_only` | Found but unavailable (`reason`): lists written, cart skipped | Orange             | 2 short beeps               | 200  |
-| `duplicate_ignored`   | Same EAN repeated inside the ~3 s debounce window; no action  | Brief green blink  | none (or 1 very short tick) | 200  |
-| `not_found`           | EAN absent from the Chronodrive catalogue                     | Red                | 1 long beep                 | 200  |
-| `partial`             | Some destinations written, at least one failed                | Orange blink       | 2 short + 1 long            | 200  |
-| `error`               | Nothing written — Chronodrive/network failure (`category`)    | Red blink          | 3 short beeps               | 502  |
-| `invalid_ean`         | Barcode failed validation — Chronodrive was never queried     | Red (double blink) | 1 long beep                 | 400  |
+| `status`              | Meaning                                                       | LED    | HTTP |
+| --------------------- | ------------------------------------------------------------- | ------ | ---- |
+| _(in flight)_         | Request sent, awaiting the ScanResponse                       | White  | —    |
+| `added`               | Found, orderable, written to every enabled destination        | Green  | 200  |
+| `added_to_lists_only` | Found but unavailable (`reason`): lists written, cart skipped | Orange | 200  |
+| `duplicate_ignored`   | Same EAN repeated inside the ~3 s debounce window; no action  | Green  | 200  |
+| `partial`             | Some destinations written, at least one failed                | Orange | 200  |
+| `not_found`           | EAN absent from the Chronodrive catalogue                     | Red    | 200  |
+| `invalid_ean`         | Barcode failed validation — Chronodrive was never queried     | Red    | 400  |
+| `error`               | Nothing written — Chronodrive/network failure (`category`)    | Red    | 502  |
+| _(no response)_       | Server unreachable / WiFi down (the POST got no reply)        | Red    | —    |
 
 > The simplest firmware can collapse this to **green = `added`**, **orange = `added_to_lists_only`**,
-> **red = everything else**. The richer mapping above is available when you want it.
+> **red = everything else** (`not_found` / `invalid_ean` / `error` / unreachable). The white in-flight
+> colour is optional. Firmware may also use blink patterns to distinguish the reds — the middleware only
+> guarantees the `status` strings and the JSON shape.
 
 ### `reason` (only on `added_to_lists_only`)
 
@@ -88,6 +96,20 @@ Per-destination outcome, useful for logging/diagnostics:
 
 - `kind`: `cart` | `list`; `id`/`name`: the cart/list identifier and label.
 - `result`: `written` | `skipped_unavailable` (cart skipped for an unavailable product) | `failed`.
+
+---
+
+## Home Assistant integration (optional)
+
+The reference firmware also exposes itself to Home Assistant (encrypted API), so a scan can be driven —
+and observed — without the physical scanner:
+
+- **Manual EAN** (`text`) — type/set an EAN; it is pushed through the **same** `POST /v1/scan` pipeline
+  as a physical scan (same `ScanResponse`, same LED feedback).
+- **Resend EAN** (`button`) — re-sends the current Manual EAN even if unchanged.
+- **Last EAN** / **Last status** (`text_sensor`) — the last processed EAN and the last `status` string,
+  updated by both physical scans and manual sends (handy for dashboards/automations and for confirming
+  what the middleware returned).
 
 ---
 
@@ -140,8 +162,8 @@ Per-destination outcome, useful for logging/diagnostics:
 
 ## ESPHome sketch (HTTP request + response parsing)
 
-> A complete, ready-to-flash configuration for an **ESP32-C6 Supermini + GM861S** (UART) with an
-> external WS2812 LED and an active buzzer (sound only on failure) lives at
+> A complete, ready-to-flash configuration for an **ESP32-C6 + GM861S** (UART) with an external WS2812
+> LED (LED-only, no buzzer) plus the optional Home Assistant integration above lives at
 > [`firmware/esphome/barclaude-scanner.yaml`](../firmware/esphome/barclaude-scanner.yaml). The sketch
 > below is the minimal illustration.
 
@@ -158,7 +180,7 @@ script:
     then:
       - http_request.post:
           url: 'http://192.168.1.50:8090/v1/scan'
-          headers:
+          request_headers:
             Content-Type: application/json
           json:
             ean: !lambda 'return ean;'
@@ -167,13 +189,14 @@ script:
               - lambda: |-
                   json::parse_json(body, [=](JsonObject root) -> bool {
                     std::string status = root["status"] | "error";
-                    if (status == "added")                    { /* green + 1 beep */ }
-                    else if (status == "added_to_lists_only")  { /* orange + 2 beeps */ }
-                    else if (status == "duplicate_ignored")    { /* short green blink */ }
-                    else                                       { /* red + error beeps */ }
+                    if (status == "added")                    { /* green */ }
+                    else if (status == "added_to_lists_only")  { /* orange */ }
+                    else if (status == "duplicate_ignored")    { /* green */ }
+                    else if (status == "partial")              { /* orange */ }
+                    else                                       { /* red: not_found/invalid_ean/error */ }
                     return true;
                   });
 ```
 
-The exact LED/buzzer wiring is the firmware's choice; the middleware only guarantees the `status`
-values above and their JSON shape.
+The exact LED wiring and colour/blink choices are the firmware's; the middleware only guarantees the
+`status` values above and their JSON shape.

@@ -1,39 +1,40 @@
 # =============================================================================
-# BarclaudeGateway scanner — ESP32-C6 Supermini + GM861S (UART)
+# BarclaudeGateway scanner — ESP32-C6 + GM861S (UART)
 #
 # Reads a barcode from the GM861S over UART, POSTs it to the BarclaudeGateway
 # middleware (POST /v1/scan { "ean": "..." }), waits for the synchronous
-# ScanResponse, and drives:
-#   - an EXTERNAL WS2812 LED  -> colour per ScanResponse.status
-#   - an EXTERNAL active buzzer -> sound ONLY on a failure outcome
+# ScanResponse, and drives an EXTERNAL WS2812 LED with a colour per
+# ScanResponse.status. Feedback is LED-only (no buzzer — DECISION-020).
 # Contract: docs/esphome-contract.md (the middleware always returns a JSON
 # ScanResponse body, even on HTTP 400/502, so we switch on `status`).
 #
+# It is also Home-Assistant-integrated: a manual-EAN text input + a resend
+# button push an EAN through the SAME pipeline as a physical scan, and the
+# last EAN / last status are exposed as sensors.
+#
 # ESP32-C6 requires the esp-idf framework in ESPHome (Arduino does not support
 # the C6). Needs a recent ESPHome (esp-idf >= 5.1).
+#
+# Secrets: create a `secrets.yaml` next to this file with: wifi_ssid,
+# wifi_password, ap_password, ota_password, api_encryption_key.
 #
 # ---------------------------------------------------------------------------
 # Wiring (all pins are configurable in the `substitutions:` block below):
 #   GM861S  TX  -> ESP RX  (gm861_rx_pin, default GPIO17)
 #   GM861S  RX  -> ESP TX  (gm861_tx_pin, default GPIO16)   # optional, config only
 #   GM861S  VCC -> 3V3     GND -> GND        # GM861S is 3.3 V TTL — do NOT use 5 V logic
-#   WS2812  DIN -> led_pin    (default GPIO8)    VCC/GND as per the module
-#   Buzzer  +   -> buzzer_pin (default GPIO10)   - -> GND   # active buzzer (beeps on HIGH)
+#   WS2812  DIN -> led_pin (default GPIO20)   VCC/GND as per the module
 #
 # GM861S one-time setup (scan these config barcodes from its manual):
 #   1. Output interface = UART / TTL-232, 9600 bps, 8N1
 #   2. Scan mode = auto-induction / continuous (so it emits on every decode)
 #   3. End suffix = CR or LF (this firmware accepts either)
-#   4. DISABLE the "good read" beep  <-- so the ONLY sound is our error buzzer
+#   4. DISABLE the "good read" beep   # optional — keeps scanning silent
 # =============================================================================
 
 substitutions:
-  device_name: barclaude-scanner
+  device_name: barclaudescanner
   friendly_name: 'Barclaude Scanner'
-
-  # --- WiFi --- (or switch these two to `!secret wifi_ssid` / `!secret wifi_password`)
-  wifi_ssid: 'YOUR_WIFI_SSID'
-  wifi_password: 'YOUR_WIFI_PASSWORD'
 
   # --- BarclaudeGateway middleware (host + port) ---
   server_host: '192.168.1.37'
@@ -45,8 +46,7 @@ substitutions:
   gm861_baud: '9600'
 
   # --- Feedback hardware ---
-  led_pin: 'GPIO8' # WS2812 data-in
-  buzzer_pin: 'GPIO10' # active buzzer +
+  led_pin: 'GPIO20' # WS2812 data-in
 
   # --- Timing ---
   http_timeout: '8s'
@@ -64,18 +64,23 @@ esp32:
 logger:
   level: INFO
 
-# Home Assistant API (add an encryption key if you expose it to HA).
+# Home Assistant API (encrypted).
 api:
+  encryption:
+    key: !secret api_encryption_key
 
 ota:
   - platform: esphome
+    password: !secret ota_password
 
 wifi:
-  ssid: ${wifi_ssid}
-  password: ${wifi_password}
-  # First-boot fallback hotspot so you can enter credentials if WiFi fails.
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  # First-boot fallback hotspot (captive portal) so you can enter credentials
+  # if WiFi fails.
   ap:
     ssid: '${friendly_name} Setup'
+    password: !secret ap_password
 
 captive_portal:
 
@@ -104,11 +109,55 @@ light:
     default_transition_length: 0s
     restore_mode: ALWAYS_OFF
 
-# External active buzzer (HIGH = sound).
-output:
-  - platform: gpio
-    id: buzzer_out
-    pin: ${buzzer_pin}
+# HA-facing control: type/set an EAN to push it through the same pipeline
+# as a physical scan. Settable from the dashboard or via text.set_value.
+text:
+  - platform: template
+    name: '${friendly_name} Manual EAN'
+    id: manual_ean
+    icon: mdi:barcode-scan
+    optimistic: true
+    mode: text
+    min_length: 0
+    max_length: 14
+    on_value:
+      then:
+        - if:
+            condition:
+              lambda: 'return !x.empty();' # ignore an empty/cleared value
+            then:
+              - script.execute:
+                  id: send_scan
+                  ean: !lambda 'return x;'
+
+# HA-facing button: force a (re)send of the current Manual EAN value, even if
+# it hasn't changed (text.on_value won't re-fire on an identical value).
+button:
+  - platform: template
+    name: '${friendly_name} Resend EAN'
+    id: resend_ean
+    icon: mdi:reload
+    on_press:
+      then:
+        - if:
+            condition:
+              lambda: 'return !id(manual_ean).state.empty();'
+            then:
+              - script.execute:
+                  id: send_scan
+                  ean: !lambda 'return id(manual_ean).state;'
+
+# HA-facing states: last EAN processed and last result, updated by both
+# physical scans and manual sends.
+text_sensor:
+  - platform: template
+    name: '${friendly_name} Last EAN'
+    id: last_ean
+    icon: mdi:barcode
+  - platform: template
+    name: '${friendly_name} Last status'
+    id: last_status
+    icon: mdi:list-status
 
 globals:
   # Assembles the incoming barcode characters until a CR/LF terminator.
@@ -156,21 +205,9 @@ script:
           red: !lambda 'return r / 255.0f;'
           green: !lambda 'return g / 255.0f;'
           blue: !lambda 'return b / 255.0f;'
-          brightness: 100%
+          brightness: 50%
       - delay: ${feedback_ms}
       - light.turn_off: status_led
-
-  # Short double beep — used only on failure outcomes.
-  - id: error_beep
-    mode: restart
-    then:
-      - output.turn_on: buzzer_out
-      - delay: 120ms
-      - output.turn_off: buzzer_out
-      - delay: 90ms
-      - output.turn_on: buzzer_out
-      - delay: 120ms
-      - output.turn_off: buzzer_out
 
   # POST one EAN to the middleware and react to the ScanResponse.
   - id: send_scan
@@ -178,11 +215,20 @@ script:
     parameters:
       ean: string
     then:
+      # White LED for the whole in-flight duration, until the result colour.
+      - script.stop: set_led # cancel any pending feedback turn_off
+      - light.turn_on:
+          id: status_led
+          red: 100%
+          green: 100%
+          blue: 100%
+          brightness: 50%
+      - delay: 10ms # yield so the LED flushes white before the blocking POST
       - lambda: 'id(awaiting_response) = true;'
       - http_request.post:
           url: 'http://${server_host}:${server_port}/v1/scan'
           capture_response: true
-          headers:
+          request_headers:
             Content-Type: application/json
           json: |-
             root["ean"] = ean;
@@ -198,30 +244,34 @@ script:
                   ESP_LOGI("scan", "ean=%s status=%s http=%d", ean.c_str(), status.c_str(),
                            response->status_code);
 
-                  // LED colour per status; buzzer ONLY on a failure outcome.
+                  // Publish to HA-facing state sensors.
+                  id(last_ean).publish_state(ean);
+                  id(last_status).publish_state(status);
+
+                  // LED colour per status (overrides the in-flight white).
                   if (status == "added") {
                     id(set_led)->execute(0, 180, 0);          // green: added to cart/list
                   } else if (status == "added_to_lists_only") {
-                    id(set_led)->execute(255, 80, 0);         // orange: unavailable -> lists only
+                    id(set_led)->execute(255, 185, 10);         // orange: unavailable -> lists only
                   } else if (status == "duplicate_ignored") {
                     id(set_led)->execute(0, 180, 0);          // green: debounced repeat
                   } else if (status == "partial") {
-                    id(set_led)->execute(255, 80, 0);         // orange + beep: some destinations failed
-                    id(error_beep)->execute();
+                    id(set_led)->execute(255, 185, 10);         // orange: some destinations failed
                   } else {
-                    // not_found, invalid_ean, error, and any unknown -> red + beep
+                    // not_found, invalid_ean, error, and any unknown -> red
                     id(set_led)->execute(200, 0, 0);
-                    id(error_beep)->execute();
                   }
-      # No response received (server unreachable / WiFi issue) -> red + beep.
+      # No response received (server unreachable / WiFi issue) -> red.
       - if:
           condition:
             lambda: 'return id(awaiting_response);'
           then:
-            - lambda: 'id(awaiting_response) = false;'
+            - lambda: |-
+                id(awaiting_response) = false;
+                id(last_ean).publish_state(ean);
+                id(last_status).publish_state("unreachable");
             - script.execute:
                 id: set_led
                 r: 200
                 g: 0
                 b: 0
-            - script.execute: error_beep
