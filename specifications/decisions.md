@@ -2,7 +2,7 @@
 
 > Decisions are added here as they are resolved. Each entry records: the question, the options considered, the choice made, and who decided.
 > All Phase 0 functional clarifications (CLARIFY-_) and architecture decisions (DECISION-_) are now resolved.
-> Last updated: 2026-06-27 (DECISION-018 — operational event-logging architecture, BATCH-3)
+> Last updated: 2026-06-27 (DECISION-008 refined — assisted first-run master-key generation, BATCH-2)
 
 ---
 
@@ -215,6 +215,14 @@
 - **Decided by**: User (Ivan) — package manager, key management, retry, retention and SQLite driver chosen explicitly; the rest presented and approved.
 - **Live-verification outcome (contract.md → v1.4.1)**: running the smoke-test against production surfaced **two real corrections to the auth contract**, now fixed in code and spec: (1) `connect.chronodrive.com` requires `Origin`/`Referer` headers (else 400 `No origin or referer retrieved`); (2) Step 1 sets the initial session cookie that must be forwarded to Step 2. With both, full login **and** silent refresh are confirmed working live (the refresh was previously only inferred).
 - **Rationale**: Minimal, mature, well-typed toolchain; secrets never on disk; resilience to transient API hiccups without masking real failures; the contract stays a living record of observed reality (§7 process applied immediately on the live findings).
+- **Refinement (2026-06-27, BL-002 — assisted first-run key generation)**: the env-injected key model is
+  unchanged, but the *first-run UX* is softened. When `BCG_MASTER_KEY` is absent, `loadEnv` now throws a
+  typed `MissingMasterKeyError` and the entry point prints a freshly generated candidate key with
+  copy-and-restart instructions (`formatFirstRunKeyHelp`), then still exits non-zero. The key is **only
+  printed, never written to `/data` or the DB**, and the app still refuses to start until it is set in
+  the environment — so this **refines, does not reverse**, the "key never on disk, hard-fail-on-absence"
+  guarantee. A *present-but-invalid* key keeps its existing plain error (a typo must not be masked by a
+  fresh-key suggestion). Shipped in BATCH-2 (loop prompt 2); full entry in `BACKLOG_ARCHIVE.md`.
 
 ---
 

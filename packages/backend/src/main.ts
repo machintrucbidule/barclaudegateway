@@ -11,7 +11,7 @@
 
 import { fileURLToPath } from 'node:url';
 import { createServices } from './bootstrap.js';
-import { loadEnv } from './config/env.js';
+import { formatFirstRunKeyHelp, loadEnv, MissingMasterKeyError } from './config/env.js';
 import { buildServer } from './ingest/server.js';
 import { IngestPipeline } from './ingest/pipeline.js';
 import { ScanEventBus } from './ingest/scanEvents.js';
@@ -129,6 +129,13 @@ export async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
+  // First run with no master key: assist the operator with a ready-to-use generated key + instructions
+  // (BL-002). The key is only printed, never written to disk; the app still does not start until it is
+  // set in the environment (DECISION-008 preserved).
+  if (error instanceof MissingMasterKeyError) {
+    console.error(formatFirstRunKeyHelp());
+    process.exit(1);
+  }
   console.error('Fatal: BarclaudeGateway failed to start');
   console.error(error);
   process.exit(1);

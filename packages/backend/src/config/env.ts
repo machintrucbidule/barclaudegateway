@@ -5,9 +5,26 @@
  * (`BCG_MASTER_KEY`); everything else (Chronodrive client_id, x-api-keys, base URLs) lives in the
  * SQLite `config` table. The key is never written to disk. Absence is a hard, clear failure — there
  * is no silent fallback, because without it the stored credentials cannot be decrypted (§8).
+ *
+ * First-run assist (BL-002, refines DECISION-008): when the key is absent, `loadEnv` throws a
+ * {@link MissingMasterKeyError}; the entry point then prints a freshly generated candidate key with
+ * copy-and-restart instructions ({@link formatFirstRunKeyHelp}) and exits non-zero. The key is still
+ * env-injected and never written to `/data` or the DB — the print is a one-time convenience.
  */
 
 import { randomBytes } from 'node:crypto';
+
+/**
+ * Thrown by {@link loadEnv} when `BCG_MASTER_KEY` is absent or blank. Distinct from a generic startup
+ * failure so the entry point can offer the first-run assist (generate + print a candidate key) instead
+ * of a bare stack trace.
+ */
+export class MissingMasterKeyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MissingMasterKeyError';
+  }
+}
 
 export interface EnvConfig {
   /** 32-byte AES-256 key. */
@@ -51,7 +68,7 @@ export function parseMasterKey(raw: string): Buffer {
 export function loadEnv(env: NodeJS.ProcessEnv = process.env): EnvConfig {
   const raw = env.BCG_MASTER_KEY;
   if (!raw || raw.trim() === '') {
-    throw new Error(
+    throw new MissingMasterKeyError(
       'BCG_MASTER_KEY is required (32-byte AES key, hex or base64). It is never written to disk.',
     );
   }
@@ -66,4 +83,28 @@ export function loadEnv(env: NodeJS.ProcessEnv = process.env): EnvConfig {
 /** Convenience for docs/ops: a fresh hex master key. */
 export function generateMasterKeyHex(): string {
   return randomBytes(32).toString('hex');
+}
+
+/**
+ * First-run assist (BL-002): a copy-and-restart message embedding a freshly generated candidate key.
+ * Pure — it only formats a string (no filesystem or DB access), so the printed key is never persisted;
+ * the operator must still set it in the environment for the app to start (DECISION-008 preserved).
+ */
+export function formatFirstRunKeyHelp(key: string = generateMasterKeyHex()): string {
+  return [
+    'BCG_MASTER_KEY is not set — the app cannot start without it.',
+    '',
+    'Here is a freshly generated 32-byte key you can use:',
+    '',
+    `    BCG_MASTER_KEY=${key}`,
+    '',
+    'Next steps:',
+    '  1. Copy the value above into the BCG_MASTER_KEY environment variable',
+    '     (Portainer stack env, your compose .env, or the container env).',
+    '  2. Restart the container / app.',
+    '',
+    'Important: this key is NOT written to disk or the database — keep it somewhere safe.',
+    'It decrypts your stored Chronodrive credentials; lose it and they become unreadable.',
+    'You may also generate your own with:  openssl rand -hex 32',
+  ].join('\n');
 }

@@ -28,19 +28,40 @@ built UI, dependencies) is rebuildable from a tag.
 
 ## Runtime configuration (`BCG_*`)
 
-| Variable         | Required | Default (in image)              | Purpose                                                                                |
-| ---------------- | -------- | ------------------------------- | -------------------------------------------------------------------------------------- |
-| `BCG_MASTER_KEY` | **Yes**  | — (hard fail if absent)         | 32-byte key (hex or base64) for AES-256 credential encryption. Inject as a secret/env. |
-| `BCG_DB_PATH`    | No       | `/data/barclaudegateway.sqlite` | SQLite file path. Must sit on the mounted volume.                                      |
-| `BCG_PORT`       | No       | `8090`                          | Port the container listens on.                                                         |
-| `BCG_HOST`       | No       | `0.0.0.0`                       | Bind address (all interfaces, so the ESP32 on the LAN can reach it).                   |
-| `BCG_UI_DIR`     | No       | `/app/packages/frontend/dist`   | Where the bundled SPA lives. Leave as-is.                                              |
+| Variable         | Required | Default (in image)                           | Purpose                                                                                |
+| ---------------- | -------- | -------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `BCG_MASTER_KEY` | **Yes**  | — (prints a generated key & exits if absent) | 32-byte key (hex or base64) for AES-256 credential encryption. Inject as a secret/env. |
+| `BCG_DB_PATH`    | No       | `/data/barclaudegateway.sqlite`              | SQLite file path. Must sit on the mounted volume.                                      |
+| `BCG_PORT`       | No       | `8090`                                       | Port the container listens on.                                                         |
+| `BCG_HOST`       | No       | `0.0.0.0`                                    | Bind address (all interfaces, so the ESP32 on the LAN can reach it).                   |
+| `BCG_UI_DIR`     | No       | `/app/packages/frontend/dist`                | Where the bundled SPA lives. Leave as-is.                                              |
 
 Generate the master key once and keep it safe:
 
 ```sh
 openssl rand -hex 32
 ```
+
+**First-run assist:** you don't have to generate it by hand. If you start the container with **no**
+`BCG_MASTER_KEY`, it prints a ready-to-use generated key with copy-and-restart instructions to the
+container logs, then exits — for example:
+
+```
+BCG_MASTER_KEY is not set — the app cannot start without it.
+
+Here is a freshly generated 32-byte key you can use:
+
+    BCG_MASTER_KEY=2f1c…<64 hex chars>…9ab0
+
+Next steps:
+  1. Copy the value above into the BCG_MASTER_KEY environment variable …
+  2. Restart the container / app.
+```
+
+Copy that value into `BCG_MASTER_KEY` (stack env / compose `.env` / container env) and redeploy. The
+key is **only printed, never written to disk or the database** — keep it safe yourself (lose it and the
+encrypted credentials become unreadable). The app does not start until the key is set in the
+environment.
 
 ## Deploy with Portainer
 

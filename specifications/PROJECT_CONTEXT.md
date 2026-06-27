@@ -1,7 +1,7 @@
 # BarclaudeGateway — Project Context
 
 > **This file is read at the start of every development step.** Keep it up to date.
-> Last updated: 2026-06-27 (BATCH-3 shipped — operational logs + scan history, DECISION-018)
+> Last updated: 2026-06-27 (BATCH-2 shipped — assisted first-run master-key generation, BL-002)
 
 ---
 
@@ -70,8 +70,11 @@ barclaudegateway/
   (`GITHUB_TOKEN`, `packages: write`), tagged `X.Y.Z` + `X.Y` + `latest`. `docker-build.yml` builds
   the image without pushing on PRs that touch it. Checks-only `ci.yml` is unchanged.
 - **Persistence / secret model**: the **SQLite file on the `/data` volume + `BCG_MASTER_KEY`** are
-  the only state to back up. The key is injected at run time (never baked/logged); no `.env`, DB, or
-  secret is in the image.
+  the only state to back up. The key is injected at run time (never baked, never written to disk); no
+  `.env`, DB, or secret is in the image. **First-run assist (BL-002, refines DECISION-008):** if the key
+  is absent on boot, the app prints a freshly *generated candidate* key with copy-and-restart
+  instructions and exits non-zero — the candidate is only printed, never persisted, and the app still
+  refuses to start until the key is set in the environment.
 - **Healthcheck**: image HEALTHCHECK hits `GET /livez` (liveness, always 200), **not** `/health`
   (a live Chronodrive readiness probe that 503s when the upstream is down). Restart: `unless-stopped`.
 - **Deploy artifact**: `deploy/stack.yml` (Portainer/compose, Watchtower-enabled) + `docs/deployment.md`.

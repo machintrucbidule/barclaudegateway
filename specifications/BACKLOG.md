@@ -9,8 +9,8 @@
 > [ops/grooming](./prompts/loop-3-ops-grooming.md). Schema and process: [`ROADMAP.md`](./ROADMAP.md) §
 > "Iterative maintenance loop".
 >
-> Last updated: 2026-06-27 (BATCH-3 shipped → archived; BATCH-1 is blocked on hardware, so **BATCH-2**
-> is the next actionable batch)
+> Last updated: 2026-06-27 (BATCH-2 shipped → archived; only **BATCH-1** remains, blocked on ESP32
+> hardware not yet received — no actionable batch until the module arrives)
 
 ---
 
@@ -61,30 +61,3 @@
   `docs/esphome-contract.md` reflect what the firmware actually does.
 - Batch: BATCH-1
 - Dependencies: none (waiting on hardware)
-
----
-
-## BATCH-2 — First-run ergonomics (P2)
-
-### [BL-002] Assisted master-key generation on first run
-
-- Type: Evolution
-- Priority: P2 (normal)
-- Status: Triaged
-- Source: user remark (2026-06-27)
-- Spec impact: decisions.md (DECISION-008 — would refine, not reverse, the env-injected key model)
-- Affected files / areas: `packages/backend/src/config/env.ts`, `packages/backend/src/main.ts`,
-  `docs/deployment.md`
-- Description: today the operator must generate `BCG_MASTER_KEY` themselves (`openssl rand -hex 32`)
-  and inject it before the first boot, which the user found rough. The key must stay env-injected and
-  never be written to disk (that separation is what protects the encrypted credentials — DECISION-008),
-  so it cannot simply be auto-persisted.
-- Change to make: when `BCG_MASTER_KEY` is absent on first boot, instead of only hard-failing, generate
-  a candidate 32-byte key and print it once to the logs with a clear instruction to copy it into the
-  environment variable and restart — **without ever writing it to `/data` or the DB**. Keep the
-  hard-fail-to-start behaviour (the app still does not run until the key is set in the environment).
-- Acceptance criteria: starting the container with no `BCG_MASTER_KEY` prints a ready-to-use generated
-  key plus instructions and exits non-zero; setting that key in the env and restarting brings the app
-  up; the key is never found in `/data` or the DB; `docs/deployment.md` documents the assisted flow.
-- Batch: BATCH-2
-- Dependencies: none

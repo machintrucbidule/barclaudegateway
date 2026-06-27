@@ -6,7 +6,38 @@
 >
 > Newest entries on top. Nothing here is active work — the active backlog is [`BACKLOG.md`](./BACKLOG.md).
 >
-> Last updated: 2026-06-27 (BATCH-3 shipped — BL-003 + BL-004)
+> Last updated: 2026-06-27 (BATCH-2 shipped — BL-002)
+
+---
+
+## BATCH-2 — First-run ergonomics (P2) — shipped 2026-06-27
+
+> Developed and shipped via loop prompt 2 on branch `feature/batch-2-assisted-master-key`
+> (`feat(config): assisted master-key generation on first run (BL-002)`). Recorded as a **refinement of
+> DECISION-008** (refines, does not reverse, the env-injected key model).
+
+### [BL-002] Assisted master-key generation on first run
+
+- Type: Evolution · Priority: P2 · Batch: BATCH-2 · Source: user remark (2026-06-27)
+- **Date shipped**: 2026-06-27
+- **What was actually done**:
+  - `config/env.ts`: new typed **`MissingMasterKeyError`** thrown by `loadEnv()` when `BCG_MASTER_KEY` is
+    absent/blank (a *present-but-invalid* key keeps its existing plain `/32 bytes/` error, so a typo is
+    not masked). New **pure** `formatFirstRunKeyHelp(key = generateMasterKeyHex())` that formats a
+    copy-and-restart message embedding a freshly generated 64-hex key — no filesystem/DB access, reusing
+    the existing `generateMasterKeyHex()`.
+  - `main.ts`: the entry-point `catch` now branches on `MissingMasterKeyError` → prints
+    `formatFirstRunKeyHelp()` to stderr and exits non-zero (the assisted first-run path); other failures
+    keep the existing "Fatal" path. Hard-fail-to-start preserved — the app still does not run until the
+    key is set in the environment.
+  - `docs/deployment.md`: documented the first-run assist (printed generated key + copy-and-restart),
+    kept the manual `openssl rand -hex 32` option, softened the `BCG_MASTER_KEY` table-row note.
+  - Specs: `decisions.md` DECISION-008 gained a **Refinement (2026-06-27, BL-002)** note;
+    `PROJECT_CONTEXT.md` secret-model bullet records the assisted first-run UX.
+- **Acceptance criteria — met**: starting with no `BCG_MASTER_KEY` prints a ready-to-use generated key +
+  instructions and exits non-zero (`formatFirstRunKeyHelp` unit-tested to embed a `parseMasterKey`-valid
+  key); the key is **never written to `/data` or the DB** (the formatter is pure — no fs/DB access);
+  setting the key in the env and restarting brings the app up; `docs/deployment.md` documents the flow.
 
 ---
 
