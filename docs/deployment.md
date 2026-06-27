@@ -21,7 +21,7 @@ built UI, dependencies) is rebuildable from a tag.
 - **Visibility:** public — Portainer/Watchtower pull it with **no registry credentials**.
 - **Tags** (published from a `vX.Y.Z` git tag): the exact `X.Y.Z` (immutable, reproducible), the
   moving `X.Y` (follows patch releases), and `latest` (newest stable release).
-  - Pin `BCG_TAG=0.1.0` for a fixed, reproducible deployment (current latest stable).
+  - Pin `BCG_TAG=0.1.1` for a fixed, reproducible deployment (current latest stable).
   - Use `latest` (the default) to let Watchtower auto-update on each new release.
 - **Base:** `node:24-slim`, runs as the non-root `node` user (uid/gid 1000).
 - **Listens on** container port **8090**.
@@ -68,7 +68,7 @@ environment.
 1. In Portainer: **Stacks → Add stack**, paste [`deploy/stack.yml`](../deploy/stack.yml).
 2. In the stack's **Environment variables**, set:
    - `BCG_MASTER_KEY` — the value from `openssl rand -hex 32` (required).
-   - `BCG_TAG` — `latest` (auto-update) or a pinned version like `0.1.0` (optional).
+   - `BCG_TAG` — `latest` (auto-update) or a pinned version like `0.1.1` (optional).
    - `BCG_PORT` — the host port to publish, if not `8090` (optional).
 3. Deploy. The container starts, creates the SQLite DB on first boot, and serves the UI on the
    published port. Finish setup (Chronodrive login, destinations) in the web UI.
@@ -138,12 +138,12 @@ made, and start the container.
 Releases are built only by CI. To publish a new version:
 
 ```sh
-# bump the version in the root package.json, commit, then (example for 0.1.0):
-git tag v0.1.0
-git push origin v0.1.0
+# bump the version in the root package.json, commit, then (example for 0.1.1):
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 The tag triggers `.github/workflows/release.yml`, which builds the image on a Linux runner and pushes
 the exact `X.Y.Z`, the moving `X.Y`, and `latest` to GHCR. Routine pushes/PRs only run the checks
 pipeline (and, when the Dockerfile changes, a no-push build check) — they never publish. Current
-latest stable: **0.1.0**.
+latest stable: **0.1.1**.
