@@ -1,6 +1,6 @@
 # Chronodrive Private API — Contract Specification
 
-**Document version:** 1.4.2
+**Document version:** 1.4.3
 **Spec status:** Draft
 **Last full verification:** 2026-06-26 (re-verified live 2026-06-27, Phase 7 — confirmed endpoints unchanged, `x-api-version` values identical)
 **Auth flow live-verified:** 2026-06-26 — full login (Steps 1+2+3) **and** silent refresh (Steps 2+3) executed end-to-end against production by the middleware (not just a browser HAR).
@@ -40,6 +40,7 @@ Each endpoint entry references the HAR session that confirmed it. Keep HAR archi
 
 | Version | Date       | Summary                                                                                                                                                                                              |
 | ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.4.3   | 2026-06-27 | §5.8 list add: duplicate add CONFIRMED **idempotent** — re-adding a product already in the list returns the same `204 No Content` and leaves the quantity unchanged, so the response is **indistinguishable** from a fresh add (membership must be read via §5.10). Captured by a live middleware probe (not a HAR), BL-005. |
 | 1.4.2   | 2026-06-26 | §3 data-API `Origin`/`Referer` note downgraded INFERRED → CONFIRMED: `api.chronodrive.com` `/v1/search-suggestions` exercised live by the middleware with the headers present (`ingest:smoke`, Phase 3) → 200. Whether the data API would reject a call *without* them is still untested (the middleware always sends them, so enforcement is moot). |
 | 1.4.1   | 2026-06-26 | Auth §2 live-verified by the middleware. Two corrections: (1) `/identity` + `/oauth/*` require `Origin`/`Referer` headers (else 400 "No origin or referer retrieved"); (2) Step 1 sets the initial Reach5 session cookie that must be forwarded to Step 2. Silent refresh now CONFIRMED live, not just inferred from the JWT. |
 | 1.4.0   | 2026-06-26 | Auth §2: full session cookie mechanism documented. Refresh flow confirmed (Steps 2+3 only, no password, using \_\_Host-SESSION). Session TTL: 72h. No remaining gaps.                                |
@@ -570,6 +571,17 @@ x-chronodrive-site-mode: DRIVE
 ```
 
 **Response: 204 No Content.**
+
+**Duplicate add is idempotent — CONFIRMED (1.4.3, live probe 2026-06-27).** Re-adding a product that is
+already in the list returns the **same `204 No Content`**, and the product's quantity **stays unchanged**
+(it does not increment). The response is therefore **indistinguishable** from a fresh add — there is no
+status code or body field that signals "already present". To know whether a product is already on a list,
+read the list contents first (§5.10). Capture source: `packages/backend/scripts/probe-duplicate-add.mjs`
+(EAN `3495562466000` → product `451343`, list `223e153d-…`: baseline absent → add → `204`, qty 1 →
+second add → `204`, qty still 1 → state restored).
+
+> **Contrast with the cart (§5.4–5.6):** the cart uses a **signed delta**, so a cart re-add is _not_
+> idempotent — it increments the quantity by the posted amount. List add and cart add differ here.
 
 ---
 

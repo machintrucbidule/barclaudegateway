@@ -6,7 +6,44 @@
 >
 > Newest entries on top. Nothing here is active work — the active backlog is [`BACKLOG.md`](./BACKLOG.md).
 >
-> Last updated: 2026-06-27 (BATCH-2 shipped — BL-002)
+> Last updated: 2026-06-27 (BATCH-4 closed by investigation — BL-005)
+
+---
+
+## BATCH-4 — Scan behaviour: already-in-list (P1) — shipped 2026-06-27
+
+> Resolved via loop prompt 2 on branch `feature/batch-4-already-in-list`
+> (`docs(contract): confirm idempotent duplicate list-add; close BL-005 by investigation`).
+> **Resolved by investigation — no application code change.** Recorded as **DECISION-019**.
+
+### [BL-005] Treat "product already in the list" as a distinct green outcome
+
+- Type: Evolution · Priority: P1 · Batch: BATCH-4 · Source: user remark (2026-06-27)
+- **Date shipped**: 2026-06-27
+- **Outcome**: **closed by investigation** — the premise (a duplicate list-add fails → red/orange) was
+  disproven by a live probe; no distinct signal was built (the user chose to simplify at the dev gate).
+- **What was actually done**:
+  - **Live probe** (`packages/backend/scripts/probe-duplicate-add.mjs`, kept as the reproducible
+    capture source): logged in, added a not-present product to a list twice, read the quantity each
+    time, then restored state. Result — a fresh add and a duplicate add **both return `204 No
+    Content`**, and the quantity **stays at 1** (idempotent); the duplicate response is
+    **indistinguishable** from a fresh add.
+  - **Consequence**: scanning an already-listed product **already** produces a green `added` outcome
+    today (the `204` → destination `written` → aggregate `added`), so the red/orange concern never
+    existed. A _distinct_ `already_in_list` label would have required a per-scan membership pre-check
+    (`getListContents`, ~1–4 GET/scan/list on the ~191-item "Classiques" list) for marginal value —
+    the user chose to drop it ("the result is green either way — why complicate?").
+  - **contract.md** §5.8: documented the idempotent-`204` duplicate-add behaviour (capture noted),
+    added a changelog row, and bumped the doc version **1.4.2 → 1.4.3**.
+  - **decisions.md**: **DECISION-019** records the investigation, the options, and the "do not build"
+    decision. **PROJECT_CONTEXT.md**: added the list-idempotency domain-knowledge bullet + a resolved
+    decisions-table row; **no** scan-state added.
+  - **No change** to `ScanStatus` / `DestinationResult`, the scan pipeline, the Chronodrive client,
+    the server, the frontend, or the firmware. No app version bump (docs/spec only — no image rebuild).
+- **Acceptance criteria** (original): superseded by the finding — scanning a product already in an
+  enabled list is **already** a green, non-error outcome (`added`, HTTP 200), as is a fresh add; the
+  two are deliberately not distinguished (DECISION-019). contract.md §5.8 documents the real
+  duplicate-add response with the capture noted and the doc version bumped.
 
 ---
 

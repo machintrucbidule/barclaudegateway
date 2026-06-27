@@ -1,7 +1,8 @@
 # BarclaudeGateway — Project Context
 
 > **This file is read at the start of every development step.** Keep it up to date.
-> Last updated: 2026-06-27 (BATCH-2 shipped — assisted first-run master-key generation, BL-002)
+> Last updated: 2026-06-27 (BATCH-4 — BL-005 resolved by investigation: duplicate list-add is an
+> idempotent 204, so an already-listed product is already green `added`; no code change, DECISION-019)
 
 ---
 
@@ -202,6 +203,7 @@ All Phase 0 architecture decisions and functional clarifications are resolved. S
 | Unconfigured = info, not error        | RESOLVED | `not_configured` category, self-test skipped until configured, dashboard "configure me" card (DECISION-016, v0.0.2) |
 | End-to-end validation + hardening      | RESOLVED | Deployed smoke/security/resilience proven; central log redaction wired (DECISION-017, v0.0.3); maintenance loop initialized |
 | Operational event-logging + scan history | RESOLVED | Dedicated `EventLog`/`EventLogBus` + `event_log` table, `LogEvent` taxonomy, 50 000-row/10-y retention, SSE tail; scan page split into operational logs + searchable history (DECISION-018, BL-003/004) |
+| "Already in list" as a distinct scan state | RESOLVED | Not built — duplicate list-add is an idempotent `204` (already green `added`); documented (contract.md §5.8) and closed by investigation (DECISION-019, BL-005) |
 
 ---
 
@@ -301,6 +303,7 @@ The generated prompt must always be fully self-contained: it lists the files to 
 - Cart mutations use **signed delta quantity** — `quantity: +1` adds, `-1` removes. NOT absolute values.
 - Setting cart quantity to 0 removes the item. POST is the only cart mutation verb needed.
 - Shopping list add/remove both use `PATCH /v1/shopping-lists/{listId}` with `objectsToAdd` / `objectsToRemove`.
+- **List add is idempotent** (contract.md §5.8, BL-005/DECISION-019): re-adding a product already on the list returns the same `204` and leaves its quantity **unchanged** (no increment), and the response is indistinguishable from a fresh add — so an already-listed product already scans green (`added`), and detecting membership would require reading the list (§5.10). Contrast the **cart's signed delta** (a cart re-add is `+1`).
 - List UUIDs are stable but must be fetched dynamically at startup via `GET /v1/shopping-lists`.
 - EAN → productId resolution: `GET /v1/search-suggestions?searchTerm={ean}` → `products[0].id`
 - `isEligible: false` means the product exists but is unavailable at the configured drive location.

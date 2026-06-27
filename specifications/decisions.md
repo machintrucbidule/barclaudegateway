@@ -2,7 +2,7 @@
 
 > Decisions are added here as they are resolved. Each entry records: the question, the options considered, the choice made, and who decided.
 > All Phase 0 functional clarifications (CLARIFY-_) and architecture decisions (DECISION-_) are now resolved.
-> Last updated: 2026-06-27 (DECISION-008 refined — assisted first-run master-key generation, BATCH-2)
+> Last updated: 2026-06-27 (DECISION-019 — BL-005 resolved by investigation: duplicate list-add is an idempotent 204, already green, no distinct signal built, BATCH-4)
 
 ---
 
@@ -500,6 +500,45 @@
   reuses an existing pattern; central redaction keeps the new journal secret-free by construction; and
   splitting the page into operational-logs + scan-history resolves the long-standing spec ambiguity.
 - **Shipped in**: BATCH-3 (loop prompt 2, 2026-06-27). Full entries in `BACKLOG_ARCHIVE.md`.
+
+---
+
+### [DECISION-019] "Already in list" needs no distinct signal — duplicate list-add is an idempotent success (BATCH-4 / BL-005)
+
+- **Date**: 2026-06-27
+- **Question**: BL-005 asked to treat "product already in an enabled list" as a **distinct** GREEN scan
+  outcome, on the assumption that Chronodrive **rejects** a duplicate list-add (non-2xx) — which the
+  pipeline would surface as a `failed` destination → `partial`/`error` (red/orange). Is a new
+  `already_in_list` status + per-list membership pre-check warranted?
+- **Investigation** (live probe, recorded in contract.md §5.8, v1.4.3): a duplicate
+  `PATCH objectsToAdd` returns the **same `204 No Content`** as a fresh add and leaves the quantity
+  **unchanged** (idempotent). The duplicate response is **indistinguishable** from a fresh add.
+- **Consequence**: the premise was wrong. Scanning a product already in a list **already** yields a
+  green `added` outcome today, with **zero code change** — the list write succeeds (204) → destination
+  `written` → aggregate `added`. There is **no** red/orange to fix.
+- **Options considered** (surfaced to the user, who chose):
+  - A — Build the distinct signal anyway: new `already_in_list` `ScanStatus` + `already_present`
+    `DestinationResult.result` + a membership **pre-check** via `getListContents` before each list add
+    (the only way to distinguish, since the response cannot), with an in-memory cache to bound the
+    ~1–4 GET/scan/list cost on a large list (~191 items). | Impact: real per-scan cost + caching
+    complexity, for a label that conveys little when the outcome is green either way.
+  - B — **Do not build detection.** Keep the existing green `added`. Document the idempotent-204
+    finding (contract.md §5.8) and close BL-005 by investigation. | Impact: zero runtime complexity,
+    zero per-scan cost; the scan no longer distinguishes "already there" from "freshly added" — both
+    read as green `added`, which is the truthful outcome.
+- **Decision**: **B.** No `already_in_list` status, no `already_present` result, no membership
+  pre-check. BL-005's real concern is already satisfied by Chronodrive's idempotent behaviour.
+- **Decided by**: User (Ivan) — explicitly chose to simplify once the probe disproved the
+  duplicate-failure premise ("the result is green either way — why complicate?").
+- **Rationale**: do not add a per-scan membership lookup to produce a distinct label when the
+  functional outcome is already correct and green. The scan contract (`ScanStatus`,
+  `DestinationResult`), the pipeline, the firmware and the UI are all **unchanged**; the only artifacts
+  touched were the contract spec (§5.8 + version bump) and this record.
+- **Note**: the capture script `packages/backend/scripts/probe-duplicate-add.mjs` is kept (alongside
+  the existing `auth-smoke`/`ingest-smoke` manual scripts) as the reproducible source of the §5.8
+  finding, per the contract's "Source traceability" principle. It is read-mostly and self-restoring;
+  not run in CI.
+- **Shipped in**: BATCH-4 (loop prompt 2, 2026-06-27). Full entry in `BACKLOG_ARCHIVE.md`.
 
 ---
 
