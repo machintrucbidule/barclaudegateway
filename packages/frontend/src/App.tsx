@@ -1,5 +1,5 @@
 import type { JSX } from 'react';
-import { AppShell, Group, NavLink, ScrollArea, Title } from '@mantine/core';
+import { AppShell, Group, NavLink, ScrollArea, Text, Title } from '@mantine/core';
 import { NavLink as RouterNavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { ConfigPage } from './pages/ConfigPage.js';
 import { DashboardPage } from './pages/DashboardPage.js';
@@ -28,8 +28,11 @@ export function App(): JSX.Element {
   return (
     <AppShell header={{ height: 56 }} navbar={{ width: 220, breakpoint: 'sm' }} padding="md">
       <AppShell.Header>
-        <Group h="100%" px="md">
+        <Group h="100%" px="md" gap="xs" align="baseline">
           <Title order={3}>BarclaudeGateway</Title>
+          <Text size="sm" c="dimmed">
+            v{__APP_VERSION__}
+          </Text>
         </Group>
       </AppShell.Header>
 
