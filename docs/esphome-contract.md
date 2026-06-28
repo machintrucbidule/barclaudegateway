@@ -10,6 +10,11 @@ answers **synchronously** with a JSON body rich enough to drive a **LED colour**
 change** — the firmware switches on the `status` field first. The reference build uses a single WS2812
 LED (no buzzer).
 
+> **Stability policy (DECISION-027):** this is an **exposed device contract** — changing it forces a
+> firmware update. It is **stability-first**: fields/states are **added**, never silently changed or
+> removed. An upstream Chronodrive change is absorbed in the gateway's wiring, not here. A breaking change
+> ships **only when unavoidable and after the user is clearly warned**.
+
 ---
 
 ## Request

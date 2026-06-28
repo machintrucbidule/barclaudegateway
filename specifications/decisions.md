@@ -2,7 +2,7 @@
 
 > Decisions are added here as they are resolved. Each entry records: the question, the options considered, the choice made, and who decided.
 > All Phase 0 functional clarifications (CLARIFY-_) and architecture decisions (DECISION-_) are now resolved.
-> Last updated: 2026-06-28 (DECISION-026 — BATCH-10 in-gateway price tracking & HA alerts + a "Suivi des prix" UI page; gated opt-in scheduler, re-arm alert, CRUD on both surfaces, BL-012; app v0.6.0)
+> Last updated: 2026-06-28 (DECISION-027 — the Layer-B epic is ONE user-triggered **0.3.0** release (no per-batch bumps; 0.4/0.5/0.6 reverted) + the internal/exposed contracts are stability-first: adapt the wiring, not the exposed API, unless unavoidable + user warned)
 
 ---
 
@@ -757,8 +757,9 @@
   relative images, `packaging.weight`); the summary/sheet split keeps search responses lean; mapping only
   the codes macronome needs avoids guessing ~50 undocumented ones; reusing `validateEan` gives one route
   for both lookup styles. Upstream `contract.md` UNCHANGED (it already documents these at 1.5.0).
-- **Shipped in**: BATCH-8 (loop prompt 2, 2026-06-28) on `feature/batch-7-local-api-foundation`, app
-  version **0.4.0**; `api/local/contract.md` → v0.2.0. Full entry in `BACKLOG_ARCHIVE.md`.
+- **Shipped in**: BATCH-8 (loop prompt 2, 2026-06-28) on `feature/batch-7-local-api-foundation`. Part of
+  the single in-development **0.3.0** release (user-triggered; DECISION-027). `api/local/contract.md`
+  spec-revision → 0.2.0. Full entry in `BACKLOG_ARCHIVE.md`.
 
 ---
 
@@ -795,8 +796,9 @@
   staying deterministic when the caller already has an id/EAN; the single-call read keeps the budget view
   cheap; read-then-zero is the contract's documented safe removal. Upstream `contract.md` UNCHANGED. Preserves
   DECISION-021 lazy/keep-alive (every client call goes through `getToken`; no background polling added).
-- **Shipped in**: BATCH-9 (loop prompt 2, 2026-06-28) on `feature/batch-7-local-api-foundation`, app version
-  **0.5.0**; `api/local/contract.md` → v0.3.0. Full entry in `BACKLOG_ARCHIVE.md`.
+- **Shipped in**: BATCH-9 (loop prompt 2, 2026-06-28) on `feature/batch-7-local-api-foundation`. Part of the
+  single in-development **0.3.0** release (user-triggered; DECISION-027). `api/local/contract.md`
+  spec-revision → 0.3.0. Full entry in `BACKLOG_ARCHIVE.md`.
 
 ---
 
@@ -835,9 +837,47 @@
   one background task honest and non-spammy; reusing the notifier + product client avoids new machinery.
   Upstream `contract.md` UNCHANGED. Preserves DECISION-021 (the scheduler is the documented exception,
   off by default).
-- **Shipped in**: BATCH-10 (loop prompt 2, 2026-06-28) on `feature/batch-7-local-api-foundation`, app
-  version **0.6.0**; `api/local/contract.md` → v0.4.0. This completes the DECISION-022 Layer-B **data**
-  surface; only BATCH-11 (wiring/ops/YAML/docs/full tests) remains. Full entry in `BACKLOG_ARCHIVE.md`.
+- **Shipped in**: BATCH-10 (loop prompt 2, 2026-06-28) on `feature/batch-7-local-api-foundation`. Part of
+  the single in-development **0.3.0** release (user-triggered; DECISION-027). `api/local/contract.md`
+  spec-revision → 0.4.0. This completes the DECISION-022 Layer-B **data** surface; only BATCH-11
+  (wiring/ops/YAML/docs/full tests) remains. Full entry in `BACKLOG_ARCHIVE.md`.
+
+---
+
+### [DECISION-027] One user-triggered 0.3.0 release + internal-contract stability policy
+
+- **Date**: 2026-06-28
+- **Question**: two corrections from the user during the Layer-B build (BATCH-7..10) that must bind all
+  future work.
+- **Decisions** (user, explicit):
+  - **(A) The whole Layer-B epic (BATCH-7..11) is ONE release, version `0.3.0`, cut only when the user
+    decides.** There are **no per-batch version bumps** — the 0.4.0 / 0.5.0 / 0.6.0 bumps made during
+    BATCH-8/9/10 were a mistake and are reverted: `package.json` stays at **0.3.0** while the epic
+    accumulates, and the published image stays **0.2.2** until the user bumps + pushes the `v0.3.0` tag
+    (DECISION-005 release model — user-initiated). Batches are tracked by their BATCH-N / DECISION / branch,
+    **not** by a version number. (The contract *documents* keep their own spec-revision numbers — e.g.
+    `api/local/contract.md` 0.1.0→…, `chronodrive/contract.md` 1.5.0 — which are independent of the app
+    release version and are NOT releases.)
+  - **(B) The internal / exposed contracts are stability-first.** The upstream **Chronodrive** API may
+    change at any time; the contracts we **expose to peripherals** must not. These exposed surfaces are:
+    the **Layer-B local API** (`specifications/api/local/contract.md`), the **internal UI API** (`/api/*`,
+    `packages/shared/src/api/contract.ts`), and the **ESP ingestion contract** (`POST /v1/scan`,
+    `docs/esphome-contract.md`). The rule:
+    - **Additive by default** — adding a new endpoint, field, or option is always allowed.
+    - **When Chronodrive changes, adapt the WIRING** — the adapter/mapper layer between the upstream client
+      and our internal contract (`chronodrive/*Mapper.ts`, the client, the route handlers) absorbs the
+      change. Prefer re-wiring over touching the exposed shape.
+    - **Modifying or removing an existing interface** (rename/remove a field/endpoint, change semantics or a
+      type) is done **only when truly unavoidable**, and then the user is **warned clearly and explicitly**
+      before it ships — because such a change forces **peripheral/device updates**: the ESP32 firmware, the
+      macronome client, the Home-Assistant YAML. Avoiding needless peripheral updates is the whole point.
+- **Decided by**: User (Ivan).
+- **Rationale**: a single user-controlled release keeps the version meaningful and the cut on the user's
+  terms; a stability-first internal contract means an upstream Chronodrive change is absorbed in the
+  gateway's wiring instead of rippling out to every device that speaks our API.
+- **Scope**: process/policy — no code behaviour. Traced here, in the three exposed contracts (a
+  "Stability & compatibility policy" note), in `PROJECT_CONTEXT.md`, and in the agent's persistent memory so
+  it binds future contexts. Applies retroactively (the version revert) and to all future batches.
 
 ---
 

@@ -1,6 +1,7 @@
 # BarclaudeGateway Local API ("Layer B") — Contract Specification
 
-**Document version:** 0.4.0
+**Document version:** 0.4.0 — *spec revision of THIS document only; independent of the app release, which
+is a single user-triggered **0.3.0** (DECISION-027). Not a release number.*
 **Spec status:** Draft (foundation + products/search + cart/lists/recipe + price-tracking shipped — epic data surface complete)
 **Last updated:** 2026-06-28 (BATCH-10 / BL-012 — price tracking & HA alerts + a UI page, DECISION-026)
 **Maintainer:** Ivan Calmels
@@ -27,6 +28,24 @@ document and our public surface is frozen in this one.
 | ------------- | ---------------------------------------------------------------------- |
 | `IMPLEMENTED` | Shipped and tested in the current version.                             |
 | `PLANNED`     | Specified here, built in a later batch (see the batch tag).            |
+
+### Stability & compatibility policy (DECISION-027) — READ BEFORE CHANGING THIS API
+
+This is an **exposed** contract: peripherals depend on it (the macronome client; and, via the sibling
+contracts, the ESP32 firmware and the Home-Assistant YAML). The **upstream** Chronodrive API may change at
+any time; **this API must not** ripple those changes outward. Rules:
+
+- **Additive by default.** Adding a new endpoint, response field, or request option is always allowed.
+- **When Chronodrive changes, change the WIRING — not this contract.** The adapter/mapper layer between the
+  upstream client and these endpoints (`packages/backend/src/chronodrive/*Mapper.ts`, the client, the route
+  handlers) absorbs upstream changes. Prefer re-wiring over altering an exposed shape.
+- **Modifying or removing an existing interface** (rename/remove a field or endpoint, change a type or
+  semantics) is done **only when truly unavoidable**, and then **the user must be warned clearly before it
+  ships** — because it forces peripheral/device updates (ESP firmware, macronome, HA YAML). Avoiding needless
+  peripheral updates is the entire reason for this policy.
+
+The same policy governs the internal UI API (`@barclaudegateway/shared` `api/contract.ts`) and the ESP
+ingestion contract (`docs/esphome-contract.md`).
 
 ---
 

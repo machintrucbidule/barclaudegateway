@@ -6,13 +6,14 @@
 >
 > Newest entries on top. Nothing here is active work — the active backlog is [`BACKLOG.md`](./BACKLOG.md).
 >
-> Last updated: 2026-06-28 (BATCH-10 — BL-012 in-gateway price tracking & HA alerts + a UI page, DECISION-026, app v0.6.0)
+> Last updated: 2026-06-28 (BATCH-10 — BL-012 in-gateway price tracking & HA alerts + a UI page, DECISION-026. NB: DECISION-027 — BATCH-7..11 are ONE user-triggered **0.3.0** release; no per-batch version bumps.)
 
 ---
 
 ## BATCH-10 — In-gateway price tracking & alerts + a UI page (P2) — shipped 2026-06-28
 
-> Developed via loop prompt 2 on branch `feature/batch-7-local-api-foundation` (app **v0.6.0**). UC7: the
+> Developed via loop prompt 2 on branch `feature/batch-7-local-api-foundation` (part of the single
+> user-triggered **0.3.0** release, DECISION-027). UC7: the
 > alert logic lives in the gateway — historise tracked-product prices, alert on a drop via a Home
 > Assistant webhook — plus, at the user's request, a **"Suivi des prix"** UI page. Recorded as
 > **DECISION-026**. Completes the DECISION-022 Layer-B **data** surface; only BATCH-11 (wiring/ops) remains.
@@ -58,15 +59,17 @@
   `price/priceScheduler.test.ts` (drop→alert→disarm→re-arm, no-price skip); `health/haWebhook.test.ts`
   (`notifyPriceDrop` payload); `http/apiRoutes.test.ts` (internal CRUD + local key-guard);
   `pages/PriceTrackingPage.test.tsx` (list/add/remove/settings). Lint/typecheck/format/build green.
-- **Docs/specs**: `api/local/contract.md` → v0.4.0 (§5.10 `IMPLEMENTED`); `decisions.md` (DECISION-026);
-  `PROJECT_CONTEXT.md`. Root `package.json` **0.5.0 → 0.6.0**. Upstream `contract.md` unchanged.
+- **Docs/specs**: `api/local/contract.md` spec-revision → 0.4.0 (§5.10 `IMPLEMENTED`); `decisions.md`
+  (DECISION-026). **No app-version bump** — part of the single 0.3.0 epic (DECISION-027). `PROJECT_CONTEXT.md`
+  updated. Upstream `contract.md` unchanged.
 - **Commit/PR**: branch `feature/batch-7-local-api-foundation` (loop prompt 2, 2026-06-28).
 
 ---
 
 ## BATCH-9 — Cart & lists via the local API (P1) — shipped 2026-06-28
 
-> Developed via loop prompt 2 on branch `feature/batch-7-local-api-foundation` (app **v0.5.0**). The
+> Developed via loop prompt 2 on branch `feature/batch-7-local-api-foundation` (part of the single
+> user-triggered **0.3.0** release, DECISION-027). The
 > read/write cart + lists surface on the local "Layer B" API, a recipe-fill composite, and a
 > budget+nutrition aggregate (UC1/5/6/9/10 — the rest of the macronome cluster). Recorded as
 > **DECISION-025**. Heavy reuse of the existing cart/list client methods; upstream `contract.md`
@@ -107,7 +110,8 @@
   batches); `http/apiRoutes.test.ts` (cart read + nutrition, cart write by id/ean/name + `not_found` report,
   lists read + add + recipe-fill → cart, key-guard 401, `chronodrive` events). Lint/typecheck/format/build green.
 - **Docs/specs**: `api/local/contract.md` → v0.3.0 (§5.3–§5.9 `IMPLEMENTED` + the `ItemRef` model);
-  `decisions.md` (DECISION-025); `PROJECT_CONTEXT.md`. Root `package.json` **0.4.0 → 0.5.0**. Upstream
+  `decisions.md` (DECISION-025); `PROJECT_CONTEXT.md`. **No app-version bump** — part of the single 0.3.0
+  epic (DECISION-027). Upstream
   `contract.md` unchanged.
 - **Commit/PR**: branch `feature/batch-7-local-api-foundation` (loop prompt 2, 2026-06-28).
 
@@ -115,7 +119,8 @@
 
 ## BATCH-8 — Products & nutrition via the local API (P1, Macronome cluster) — shipped 2026-06-28
 
-> Developed via loop prompt 2 on branch `feature/batch-7-local-api-foundation` (app **v0.4.0**). First
+> Developed via loop prompt 2 on branch `feature/batch-7-local-api-foundation` (part of the single
+> user-triggered **0.3.0** release, DECISION-027). First
 > data endpoints on the local "Layer B" API: search + the full product sheet with mapped nutrition,
 > weight, price and absolute image URLs, backed by the upstream Chronodrive **Products** service.
 > Recorded as **DECISION-024**. Upstream `contract.md` unchanged (already documents these at 1.5.0);
@@ -155,9 +160,9 @@
   product methods + Products-key/site-header assertions + empty-input short-circuit); `apiRoutes.test.ts`
   (search 200/400, product by EAN 200 with nutrition, by id 200, unknown → 404, 401 without key,
   `chronodrive` events filterable). Lint/typecheck/format/build green.
-- **Docs/specs**: `api/local/contract.md` → v0.2.0 (§5.1/§5.2 `IMPLEMENTED` with shapes); `decisions.md`
-  (DECISION-024); `PROJECT_CONTEXT.md` (endpoints, Products key, decision-table row). Root `package.json`
-  **0.3.0 → 0.4.0**. Upstream `contract.md` unchanged.
+- **Docs/specs**: `api/local/contract.md` spec-revision → 0.2.0 (§5.1/§5.2 `IMPLEMENTED` with shapes);
+  `decisions.md` (DECISION-024); `PROJECT_CONTEXT.md` (endpoints, Products key, decision-table row). **No
+  app-version bump** — part of the single 0.3.0 epic (DECISION-027). Upstream `contract.md` unchanged.
 - **Commit/PR**: branch `feature/batch-7-local-api-foundation` (loop prompt 2, 2026-06-28).
 
 ---

@@ -10,8 +10,10 @@
 > "Iterative maintenance loop".
 >
 > Last updated: 2026-06-28 (**BATCH-10 shipped** — BL-012 in-gateway price tracking & HA alerts + a UI
-> page, DECISION-026, app v0.6.0; moved to `BACKLOG_ARCHIVE.md`. The new top batch is **BATCH-11** (wiring,
-> ops, YAML/HA, docs & tests) — the final batch of the epic. Develop it via loop prompt 2.)
+> page, DECISION-026; moved to `BACKLOG_ARCHIVE.md`. The new top batch is **BATCH-11** (wiring, ops,
+> YAML/HA, docs & tests) — the final batch of the epic. **DECISION-027**: the whole epic is ONE
+> user-triggered **0.3.0** release — no per-batch version bumps — and the exposed contracts are
+> stability-first. Develop it via loop prompt 2.)
 
 ---
 

@@ -6,6 +6,11 @@
  * (contract.md §8): credentials are write-only — the password is never serialised back to the browser;
  * only a `set` flag is exposed. The per-service `x-api-key`s are NOT secret (they ship in Chronodrive's
  * public bundle) and are returned/edited normally.
+ *
+ * Stability policy (DECISION-027): this is an EXPOSED contract — additive changes are free, but modifying
+ * or removing an existing shape is avoided (absorb upstream Chronodrive changes in the wiring/mappers, not
+ * here) and only done when unavoidable, after warning the user (it can force peripheral updates). Same rule
+ * for the Layer-B `./local.ts` and the ESP `ScanResponse` in `../ingest/contract.ts`.
  */
 
 import type { ErrorCategory, ShoppingList } from '../chronodrive/contract.js';
