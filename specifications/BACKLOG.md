@@ -9,9 +9,9 @@
 > [ops/grooming](./prompts/loop-3-ops-grooming.md). Schema and process: [`ROADMAP.md`](./ROADMAP.md) §
 > "Iterative maintenance loop".
 >
-> Last updated: 2026-06-28 (**BATCH-9 shipped** — BL-011 cart & lists on the local API, DECISION-025,
-> app v0.5.0; moved to `BACKLOG_ARCHIVE.md`. The new top batch is **BATCH-10** (in-gateway price tracking
-> & alerts) — develop it via loop prompt 2.)
+> Last updated: 2026-06-28 (**BATCH-10 shipped** — BL-012 in-gateway price tracking & HA alerts + a UI
+> page, DECISION-026, app v0.6.0; moved to `BACKLOG_ARCHIVE.md`. The new top batch is **BATCH-11** (wiring,
+> ops, YAML/HA, docs & tests) — the final batch of the epic. Develop it via loop prompt 2.)
 
 ---
 
@@ -38,8 +38,9 @@
 
 > Widen the gateway into a **local personal API** (its own "Layer B" contract) querying Chronodrive
 > (product, nutrition, price, cart, lists), enabling the macronome integration. Upstream knowledge is
-> already captured in `contract.md` v1.5.0 (HAR 2026-06-28). Batches are priority-ordered; **BATCH-10 is
-> the next to develop** (BATCH-7/8/9 shipped — see `BACKLOG_ARCHIVE.md`). Develop one batch per loop-2 run.
+> already captured in `contract.md` v1.5.0 (HAR 2026-06-28). Batches are priority-ordered; **BATCH-11 is
+> the next to develop** (BATCH-7/8/9/10 shipped — see `BACKLOG_ARCHIVE.md`) — the final batch. Develop one
+> batch per loop-2 run.
 >
 > **Cross-cutting acceptance (every batch in this epic):** each new exchange — both an **upstream
 > Chronodrive** client call and an **inbound local-API** request served — emits a `LogEvent` that is
@@ -51,34 +52,7 @@
 
 ---
 
-## BATCH-10 — In-gateway price tracking & alerts (P2) — top batch, next to develop
-
-### [BL-012] Price-history store, per-product thresholds, scheduler, and HA webhook alert
-
-- Type: Evolution
-- Priority: P2
-- Status: Batched
-- Source: user remark (2026-06-28)
-- Spec impact: api/local/contract.md; decisions.md (DECISION-022); reuses DECISION-014 HA-webhook pattern
-- Affected files / areas: `packages/backend/src/storage/` (new price-history + tracked-products tables),
-  `packages/backend/src/` (scheduler), `packages/backend/src/health/haWebhook.ts` (reuse notifier),
-  `packages/backend/src/http/` (tracking CRUD routes), `packages/frontend/` (tracking UI)
-- Description: serves UC7 — the alert logic lives in the gateway (user's choice): historise prices,
-  compare to per-product thresholds, notify via a Home Assistant webhook on a drop.
-- Change to make: tables for tracked products + price history; a scheduler that periodically reads
-  prices (gated so it respects the spirit of lazy mode — opt-in / its own interval) and appends history;
-  threshold config per product; reuse `HaWebhookNotifier` to fire a secret-free alert on a qualifying
-  drop; local API CRUD (`/api/v1/price-tracking/*`) + a small UI section to manage tracked products and
-  view history.
-- Acceptance criteria: adding a tracked product records prices over time; a price at/below threshold
-  fires exactly one HA alert (cooldown like DECISION-014); the scheduler does not run unbounded calls;
-  CRUD + history visible in the UI and logged/categorized.
-- Batch: BATCH-10
-- Dependencies: BL-008, BL-009, BL-010
-
----
-
-## BATCH-11 — Wiring, ops, YAML/HA, docs & tests (P2)
+## BATCH-11 — Wiring, ops, YAML/HA, docs & tests (P2) — top batch, next to develop
 
 ### [BL-013] Surface config (paths + API key), update ESPHome/HA YAML, docs, full tests, lazy/keepalive check
 

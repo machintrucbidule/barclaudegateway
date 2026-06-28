@@ -107,3 +107,57 @@ export interface ErrorState {
   active: boolean;
   error?: ErrorStateError;
 }
+
+// ---------------------------------------------------------------------------------------------
+// BL-012 — price tracking (exposed on both `/api/price-tracking/*` and `/api/v1/price-tracking/*`)
+// ---------------------------------------------------------------------------------------------
+
+/** A product under price tracking + its threshold and last observed price. */
+export interface TrackedProduct {
+  productId: string;
+  ean?: string;
+  label?: string;
+  /** Alert fires when the current price is at/below this (€). */
+  threshold: number;
+  lastPrice?: number;
+  lastCheckedAt?: number;
+  /** `true` while the per-product alert is armed (re-arms when the price recovers above the threshold). */
+  armed: boolean;
+  lastAlertAt?: number;
+}
+
+/** `GET /price-tracking` — all tracked products. */
+export interface TrackedProductsResponse {
+  products: TrackedProduct[];
+}
+
+/** `POST /price-tracking` body: identify the product by EAN or product id, plus the alert threshold. */
+export interface AddTrackedProductInput {
+  ean?: string;
+  productId?: string;
+  threshold: number;
+}
+
+/** One observed price point. */
+export interface PricePoint {
+  price: number;
+  at: number;
+}
+
+/** `GET /price-tracking/{productId}/history` — recent price points (newest first). */
+export interface PriceHistoryResponse {
+  productId: string;
+  history: PricePoint[];
+}
+
+/** `GET|PUT /price-tracking/settings` — the gated scheduler's toggle + interval. */
+export interface PriceTrackingSettings {
+  enabled: boolean;
+  intervalHours: number;
+}
+
+/** `POST /price-tracking/check-now` — summary of a manual price-check run. */
+export interface CheckNowResult {
+  checked: number;
+  alerts: number;
+}

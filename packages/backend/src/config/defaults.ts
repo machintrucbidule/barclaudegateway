@@ -62,6 +62,17 @@ export interface AppConfig {
    * {@link appConfigFromMap} always normalises it to a string (`''` until generated).
    */
   localApiKey?: string;
+  /**
+   * Price tracking (BL-012, DECISION-026). `priceTrackingEnabled` arms the gated scheduler — the epic's
+   * sanctioned background exception, **default off** so an idle install makes no background Chronodrive
+   * call. `priceTrackingIntervalHours` is how often the scheduler re-reads tracked prices (default 12).
+   * Managed by the "Suivi des prix" page (a dedicated settings endpoint, `ConfigStore.set`), so these are
+   * NOT in the shared `ApiConfig` and are deliberately excluded from {@link appConfigToEntries} — the
+   * user-facing `PUT /api/config` must never clobber them (same rule as `localApiKey`). Optional in the
+   * type for that reason; {@link appConfigFromMap} always normalises them (default off / 12h).
+   */
+  priceTrackingEnabled?: boolean;
+  priceTrackingIntervalHours?: number;
 }
 
 /** Config-table column keys (one row per key). Kept as constants to avoid typos. */
@@ -81,6 +92,8 @@ export const CONFIG_KEYS = {
   haWebhookUrl: 'ha_webhook_url',
   authMode: 'auth_mode',
   localApiKey: 'local_api_key',
+  priceTrackingEnabled: 'price_tracking_enabled',
+  priceTrackingIntervalHours: 'price_tracking_interval_hours',
 } as const;
 
 /** Known-good seed values, verified 2026-06-26 (contract.md §2.1, §3.1, §4). */
@@ -105,6 +118,9 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   // Empty seed: the backend auto-generates a key on first boot when this is empty (BL-008). Never
   // seeded/written via appConfigToEntries — see the field doc on AppConfig.
   localApiKey: '',
+  // Price tracking is opt-in (BL-012): off by default, 12h scheduler interval when enabled.
+  priceTrackingEnabled: false,
+  priceTrackingIntervalHours: 12,
 };
 
 /** Flatten an {@link AppConfig} into config-table `[key, value]` rows. */
@@ -124,6 +140,9 @@ export function appConfigToEntries(config: AppConfig): Array<[string, string]> {
     [CONFIG_KEYS.siteId, config.siteId],
     [CONFIG_KEYS.haWebhookUrl, config.haWebhookUrl],
     [CONFIG_KEYS.authMode, config.authMode],
+    // NOTE: `priceTrackingEnabled` / `priceTrackingIntervalHours` are intentionally NOT listed — they are
+    // managed by the "Suivi des prix" page via `ConfigStore.set`, so the user-facing `PUT /api/config`
+    // writer (which iterates this list) must never overwrite them (same rule as `localApiKey`).
     // NOTE: `localApiKey` is intentionally NOT listed. It is app-managed (auto-generated at boot) and
     // must never be written by the default seed or the user-facing `PUT /api/config` path — both go
     // through this function. It is persisted only via `ConfigStore.set` and read in appConfigFromMap.
@@ -170,5 +189,14 @@ export function appConfigFromMap(map: ReadonlyMap<string, string>): AppConfig {
     // Optional: empty until the boot-time generator writes it (BL-008). Never seeded via this map's
     // writer (appConfigToEntries) — only set directly by ConfigStore.set in bootstrap.
     localApiKey: map.get(CONFIG_KEYS.localApiKey) ?? '',
+    // Optional (absent on DBs seeded before BL-012): off by default, 12h interval.
+    priceTrackingEnabled: map.get(CONFIG_KEYS.priceTrackingEnabled) === 'true',
+    priceTrackingIntervalHours: toPositiveInt(map.get(CONFIG_KEYS.priceTrackingIntervalHours), 12),
   };
+}
+
+/** Parse a stored positive-integer config value, falling back when missing/invalid. */
+function toPositiveInt(value: string | undefined, fallback: number): number {
+  const n = value !== undefined ? Number.parseInt(value, 10) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : fallback;
 }

@@ -21,6 +21,8 @@ import { EventLogger } from '../logging/eventLogger.js';
 import { buildServer } from '../ingest/server.js';
 import { ErrorMonitor } from '../health/errorMonitor.js';
 import { HaWebhookNotifier } from '../health/haWebhook.js';
+import { PriceTrackingStore } from '../storage/priceTracking.js';
+import { PriceScheduler } from '../price/priceScheduler.js';
 
 const API_ORIGIN = 'https://api.test.local';
 const SECRET_PASSWORD = 'sup3r-s3cret-pw';
@@ -42,6 +44,8 @@ const CONFIG: AppConfig = {
   siteId: '1016',
   haWebhookUrl: '',
   authMode: 'keepalive',
+  priceTrackingEnabled: false,
+  priceTrackingIntervalHours: 12,
 };
 
 const pathIs =
@@ -68,6 +72,7 @@ interface Harness {
   eventLog: EventLog;
   eventBus: EventLogBus;
   errorMonitor: ErrorMonitor;
+  priceTracking: PriceTrackingStore;
 }
 
 function buildHarness(): Harness {
@@ -107,6 +112,14 @@ function buildHarness(): Harness {
   const haWebhook = new HaWebhookNotifier({
     getUrl: () => configStore.readAppConfig().haWebhookUrl,
   });
+  const priceTracking = new PriceTrackingStore(db);
+  const priceScheduler = new PriceScheduler({
+    chronodrive,
+    store: priceTracking,
+    notifier: haWebhook,
+    configStore,
+    emit,
+  });
   const app = buildServer({
     pipeline,
     chronodrive,
@@ -121,6 +134,8 @@ function buildHarness(): Harness {
     emit,
     errorMonitor,
     haWebhook,
+    priceTracking,
+    priceScheduler,
   });
   return {
     app,
@@ -133,6 +148,7 @@ function buildHarness(): Harness {
     eventLog,
     eventBus,
     errorMonitor,
+    priceTracking,
   };
 }
 
@@ -770,6 +786,90 @@ describe('api routes (fastify.inject)', () => {
     expect(
       (await h.app.inject({ method: 'POST', url: '/api/v1/cart/items', payload: {} })).statusCode,
     ).toBe(401);
+  });
+
+  it('price tracking: full CRUD on the internal /api/price-tracking surface (BL-012)', async () => {
+    // Adding by EAN resolves the product via the Products search.
+    pool
+      .intercept({ path: pathIs('/v1/products'), method: 'GET' })
+      .reply(200, {
+        page: { size: 1, totalElements: 1, totalPages: 1, number: 1, hasNext: false },
+        content: [{ id: '91574', labels: { productLabel: 'Mozzarella' }, eans: ['3596710335510'] }],
+      })
+      .persist();
+
+    const add = await h.app.inject({
+      method: 'POST',
+      url: '/api/price-tracking',
+      payload: { ean: '3596710335510', threshold: 1.5 },
+    });
+    expect(add.statusCode).toBe(200);
+    expect(add.json()).toMatchObject({
+      productId: '91574',
+      label: 'Mozzarella',
+      threshold: 1.5,
+      armed: true,
+    });
+
+    const list = await h.app.inject({ method: 'GET', url: '/api/price-tracking' });
+    expect(list.json().products).toHaveLength(1);
+
+    const put = await h.app.inject({
+      method: 'PUT',
+      url: '/api/price-tracking/91574',
+      payload: { threshold: 1.2 },
+    });
+    expect(put.json().threshold).toBe(1.2);
+
+    const history = await h.app.inject({ method: 'GET', url: '/api/price-tracking/91574/history' });
+    expect(history.json()).toEqual({ productId: '91574', history: [] });
+
+    // Settings round-trip + apply.
+    expect(
+      (await h.app.inject({ method: 'GET', url: '/api/price-tracking/settings' })).json(),
+    ).toEqual({
+      enabled: false,
+      intervalHours: 12,
+    });
+    const settings = await h.app.inject({
+      method: 'PUT',
+      url: '/api/price-tracking/settings',
+      payload: { enabled: true, intervalHours: 6 },
+    });
+    expect(settings.json()).toEqual({ enabled: true, intervalHours: 6 });
+    expect(h.configStore.readAppConfig().priceTrackingEnabled).toBe(true);
+
+    const del = await h.app.inject({ method: 'DELETE', url: '/api/price-tracking/91574' });
+    expect(del.json()).toEqual({ removed: '91574' });
+
+    // No products left → check-now is a no-op summary (no upstream call).
+    const check = await h.app.inject({ method: 'POST', url: '/api/price-tracking/check-now' });
+    expect(check.json()).toEqual({ checked: 0, alerts: 0 });
+
+    // Bad input.
+    expect(
+      (
+        await h.app.inject({
+          method: 'POST',
+          url: '/api/price-tracking',
+          payload: { threshold: 1 },
+        })
+      ).statusCode,
+    ).toBe(400);
+  });
+
+  it('price tracking: the local /api/v1 surface is key-guarded (BL-012)', async () => {
+    expect((await h.app.inject({ method: 'GET', url: '/api/v1/price-tracking' })).statusCode).toBe(
+      401,
+    );
+    h.configStore.set(CONFIG_KEYS.localApiKey, 'LK');
+    const ok = await h.app.inject({
+      method: 'GET',
+      url: '/api/v1/price-tracking',
+      headers: { 'x-api-key': 'LK' },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toEqual({ products: [] });
   });
 
   it('PUT /api/config journals a config_change event (BL-003)', async () => {

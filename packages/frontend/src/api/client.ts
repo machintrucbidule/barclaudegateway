@@ -8,7 +8,9 @@
  */
 
 import type {
+  AddTrackedProductInput,
   ApiConfig,
+  CheckNowResult,
   ConfigResponse,
   CredentialsInput,
   DestinationsResponse,
@@ -17,7 +19,11 @@ import type {
   EventsResponse,
   HealthReport,
   LogCategory,
+  PriceHistoryResponse,
+  PriceTrackingSettings,
   ScansResponse,
+  TrackedProduct,
+  TrackedProductsResponse,
 } from '@barclaudegateway/shared';
 
 /** Outcome of the config-page "send test" button (a Home Assistant webhook probe). */
@@ -122,4 +128,19 @@ export const api = {
 
   getErrorState: (): Promise<ErrorState> => getJson('/api/error-state'),
   sendHaWebhookTest: (): Promise<WebhookTestResult> => sendJson('POST', '/api/notify/test'),
+
+  // BL-012 — price tracking (internal mirror of the local `/api/v1/price-tracking/*` surface).
+  getTrackedProducts: (): Promise<TrackedProductsResponse> => getJson('/api/price-tracking'),
+  addTrackedProduct: (input: AddTrackedProductInput): Promise<TrackedProduct> =>
+    sendJson('POST', '/api/price-tracking', input),
+  updateThreshold: (productId: string, threshold: number): Promise<TrackedProduct> =>
+    sendJson('PUT', `/api/price-tracking/${encodeURIComponent(productId)}`, { threshold }),
+  removeTrackedProduct: (productId: string): Promise<{ removed: string }> =>
+    sendJson('DELETE', `/api/price-tracking/${encodeURIComponent(productId)}`),
+  getPriceHistory: (productId: string): Promise<PriceHistoryResponse> =>
+    getJson(`/api/price-tracking/${encodeURIComponent(productId)}/history`),
+  getPriceSettings: (): Promise<PriceTrackingSettings> => getJson('/api/price-tracking/settings'),
+  putPriceSettings: (settings: PriceTrackingSettings): Promise<PriceTrackingSettings> =>
+    sendJson('PUT', '/api/price-tracking/settings', settings),
+  checkPricesNow: (): Promise<CheckNowResult> => sendJson('POST', '/api/price-tracking/check-now'),
 };

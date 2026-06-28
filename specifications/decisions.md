@@ -2,7 +2,7 @@
 
 > Decisions are added here as they are resolved. Each entry records: the question, the options considered, the choice made, and who decided.
 > All Phase 0 functional clarifications (CLARIFY-_) and architecture decisions (DECISION-_) are now resolved.
-> Last updated: 2026-06-28 (DECISION-025 — BATCH-9 cart & lists on the local API: cart read/write, lists CRUD, recipe-fill, budget+nutrition aggregate, id/ean/name resolution, BL-011; app v0.5.0)
+> Last updated: 2026-06-28 (DECISION-026 — BATCH-10 in-gateway price tracking & HA alerts + a "Suivi des prix" UI page; gated opt-in scheduler, re-arm alert, CRUD on both surfaces, BL-012; app v0.6.0)
 
 ---
 
@@ -797,6 +797,47 @@
   DECISION-021 lazy/keep-alive (every client call goes through `getToken`; no background polling added).
 - **Shipped in**: BATCH-9 (loop prompt 2, 2026-06-28) on `feature/batch-7-local-api-foundation`, app version
   **0.5.0**; `api/local/contract.md` → v0.3.0. Full entry in `BACKLOG_ARCHIVE.md`.
+
+---
+
+### [DECISION-026] In-gateway price tracking, alerts & a UI page (BATCH-10 / BL-012)
+
+- **Date**: 2026-06-28
+- **Question**: build UC7 — historise tracked-product prices in the gateway, alert on a drop via a Home
+  Assistant webhook — **and** (the user's explicit request) add a UI page to list/add/remove tracked
+  products, set thresholds, and manage the scheduler.
+- **Decisions** (the CRUD-surface choice made explicitly by the user; the rest presented + approved):
+  - **CRUD on BOTH surfaces** (user: *"les deux"*): one `priceTrackingRoutes` sub-plugin registered on the
+    internal UI API `/api/price-tracking/*` (no key — the "Suivi des prix" page) **and** the local API
+    `/api/v1/price-tracking/*` (inherits the BATCH-7 `X-API-Key` guard via plugin encapsulation — for
+    macronome/external clients). Written once, mounted twice.
+  - **New storage** (`tracked_products` + `price_history` tables, `PriceTrackingStore`), modelled on the
+    scan/event journals (retention prune added to the daily prune).
+  - **Gated opt-in scheduler** (`PriceScheduler`): the epic's one sanctioned background exception —
+    **default off** (`priceTrackingEnabled`, `priceTrackingIntervalHours` default 12h, backend-managed
+    config NOT in the shared `ApiConfig`, excluded from `appConfigToEntries` so `PUT /config` can't clobber
+    them). `start()`/`stop()`/`applyConfig()` mirror `TokenLifecycle`'s `unref()`+`stop()`; a manual
+    `check-now` runs a cycle on demand.
+  - **Re-arm alert logic**: a drop fires once when `defaultPrice ≤ threshold` while armed (then disarms);
+    it re-arms only when the price recovers above the threshold — so a price sitting below does not
+    re-alert every cycle. No webhook cooldown needed for price drops (the flag is the dedup).
+  - **HA price-drop webhook**: `HaWebhookNotifier.notifyPriceDrop` posts a secret-free
+    `{ kind: 'price_drop', severity: 'info', productId, label?, price, threshold, at }` (additive to the
+    Phase-5 notifier; the critical-error payload is unchanged).
+  - **EAN-resolve on add** (reuses `getProductByEan`/`getProduct` from BATCH-8) to store the product id +
+    label; **a new `/prices` page** ("Suivi des prix") in the React app (nav + route).
+  - **No new `LogEventType`**: scheduler reads emit `price_check` (`chronodrive`); the alert emits
+    `ha_alert`; CRUD changes emit `config_change` (`other`).
+- **Decided by**: User (Ivan) — the both-surfaces CRUD choice + the explicit "add a page" request; the
+  scheduler gating, re-arm logic, price metric (`defaultPrice`) and webhook reuse presented and approved.
+- **Rationale**: price tracking belongs in the gateway (self-contained, observable); a UI page is the
+  natural manager, while the key-guarded local mirror serves external clients; opt-in + re-arm keeps the
+  one background task honest and non-spammy; reusing the notifier + product client avoids new machinery.
+  Upstream `contract.md` UNCHANGED. Preserves DECISION-021 (the scheduler is the documented exception,
+  off by default).
+- **Shipped in**: BATCH-10 (loop prompt 2, 2026-06-28) on `feature/batch-7-local-api-foundation`, app
+  version **0.6.0**; `api/local/contract.md` → v0.4.0. This completes the DECISION-022 Layer-B **data**
+  surface; only BATCH-11 (wiring/ops/YAML/docs/full tests) remains. Full entry in `BACKLOG_ARCHIVE.md`.
 
 ---
 

@@ -22,6 +22,8 @@ import { EventLogger } from '../logging/eventLogger.js';
 import { buildServer } from './server.js';
 import { ErrorMonitor } from '../health/errorMonitor.js';
 import { HaWebhookNotifier } from '../health/haWebhook.js';
+import { PriceTrackingStore } from '../storage/priceTracking.js';
+import { PriceScheduler } from '../price/priceScheduler.js';
 
 const API_ORIGIN = 'https://api.test.local';
 const EAN = '3183280000933';
@@ -43,6 +45,8 @@ const CONFIG: AppConfig = {
   siteId: '',
   haWebhookUrl: '',
   authMode: 'keepalive',
+  priceTrackingEnabled: false,
+  priceTrackingIntervalHours: 12,
 };
 
 const pathIs =
@@ -120,6 +124,14 @@ describe('ingest server (fastify.inject)', () => {
     const haWebhook = new HaWebhookNotifier({
       getUrl: () => configStore.readAppConfig().haWebhookUrl,
     });
+    const priceTracking = new PriceTrackingStore(db);
+    const priceScheduler = new PriceScheduler({
+      chronodrive,
+      store: priceTracking,
+      notifier: haWebhook,
+      configStore,
+      emit,
+    });
     app = buildServer({
       pipeline,
       chronodrive,
@@ -134,6 +146,8 @@ describe('ingest server (fastify.inject)', () => {
       emit,
       errorMonitor,
       haWebhook,
+      priceTracking,
+      priceScheduler,
     });
   });
 

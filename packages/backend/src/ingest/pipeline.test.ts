@@ -34,6 +34,8 @@ const CONFIG: AppConfig = {
   siteId: '',
   haWebhookUrl: '',
   authMode: 'keepalive',
+  priceTrackingEnabled: false,
+  priceTrackingIntervalHours: 12,
 };
 
 const pathIs =

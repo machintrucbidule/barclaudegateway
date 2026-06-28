@@ -1,12 +1,12 @@
 # BarclaudeGateway — Project Context
 
 > **This file is read at the start of every development step.** Keep it up to date.
-> Last updated: 2026-06-28 (**BATCH-9 shipped — DECISION-025, app v0.5.0**: cart & lists on the local API —
-> `GET /api/v1/cart` + `/cart/nutrition` (budget+macros aggregate), `POST/DELETE /cart/items`, `GET /lists`
-> + `/lists/{id}`, `POST/DELETE /lists/{id}/items`, `POST /recipe-fill`; `ItemRef` id/ean/name write model
-> with a per-item resolution report (BL-011). `api/local/contract.md` → v0.3.0. Next top batch: **BATCH-10**
-> (in-gateway price tracking & alerts). Previously: BATCH-8 products & nutrition (DECISION-024, v0.4.0);
-> `contract.md` at **1.5.0**.)
+> Last updated: 2026-06-28 (**BATCH-10 shipped — DECISION-026, app v0.6.0**: in-gateway **price tracking &
+> HA alerts** + a new **"Suivi des prix"** UI page. Tracked-products CRUD + thresholds + history + a gated
+> opt-in scheduler (re-arm alert, `price_drop` webhook) on both `/api/v1/price-tracking/*` (key-guarded)
+> and the internal `/api/price-tracking/*` (BL-012). `api/local/contract.md` → v0.4.0 — the Layer-B **data**
+> surface is now complete; only **BATCH-11** (wiring/ops/YAML/docs/full tests) remains. Previously: BATCH-9
+> cart & lists (DECISION-025, v0.5.0); `contract.md` at **1.5.0**.)
 
 ---
 
@@ -48,13 +48,15 @@ barclaudegateway/
 > workflow (`.github/workflows/release.yml`, tag-triggered) + a no-push PR build check
 > (`docker-build.yml`), the Portainer stack (`deploy/stack.yml`), and `docs/deployment.md`
 > (Phase 6, DECISION-015). Docker is still never built or tested on Windows — only CI builds it.
-> The version started at **0.0.1**; **current version is `0.5.0`** — it ships **BATCH-9** (BL-011: cart &
-> lists on the local API — `GET /cart` + `/cart/nutrition`, `POST/DELETE /cart/items`, `GET /lists` +
-> `/lists/{id}`, `POST/DELETE /lists/{id}/items`, `POST /recipe-fill`; `ItemRef` id/ean/name write model +
-> per-item resolution report; batch cart write + cart mapper/aggregate; DECISION-025). `0.4.0` shipped
-> **BATCH-8** (BL-010: products & nutrition — `GET /api/v1/search?q=` + `GET /api/v1/products/{eanOrId}`
-> with mapped nutrition/weight/price/images, a new Products `x-api-key`, §5.12.1 mapper; DECISION-024).
-> `0.3.0` shipped **BATCH-7** (BL-008 local "Layer B" API foundation:
+> The version started at **0.0.1**; **current version is `0.6.0`** — it ships **BATCH-10** (BL-012:
+> in-gateway price tracking & HA alerts + a "Suivi des prix" UI page — tracked-products CRUD + thresholds +
+> history + a gated opt-in scheduler with a `price_drop` webhook, on both `/api/v1/price-tracking/*` and the
+> internal `/api/price-tracking/*`; DECISION-026). `0.5.0` shipped **BATCH-9** (BL-011: cart & lists —
+> `GET /cart` + `/cart/nutrition`, `POST/DELETE /cart/items`, `GET /lists` + `/lists/{id}`,
+> `POST/DELETE /lists/{id}/items`, `POST /recipe-fill`; `ItemRef` id/ean/name + resolution report;
+> DECISION-025). `0.4.0` shipped **BATCH-8** (BL-010: products & nutrition — `GET /api/v1/search?q=` +
+> `GET /api/v1/products/{eanOrId}` with mapped nutrition/weight/price/images, a new Products `x-api-key`,
+> §5.12.1 mapper; DECISION-024). `0.3.0` shipped **BATCH-7** (BL-008 local "Layer B" API foundation:
 > `/api/v1` prefix + app-managed `X-API-Key` guard + `GET /api/v1/ping` stub + new `api/local/contract.md`;
 > BL-009 logging taxonomy split into API Chronodrive vs API interne; DECISION-023). `0.2.2` shipped
 > **BATCH-6** (BL-007: lazy mode no longer force-fetches the shopping lists
@@ -174,8 +176,16 @@ notably **macronome** — can query Chronodrive through it (products, nutrition,
   Writes take an **`ItemRef`** (`id` / `ean` / `name`, priority in that order; `ean`/`name` resolve via
   search) and return a per-item **resolution report**. A single cart read yields lines + the aggregate (the
   §5.3 line carries the full product). Mapping in `chronodrive/cartMapper.ts`; a batch `updateCartItems`
-  client method (the single-item `updateCartItem` delegates to it). **Price-tracking** is the last
-  `PLANNED` piece (BATCH-10).
+  client method (the single-item `updateCartItem` delegates to it).
+- **Price tracking shipped (BATCH-10, BL-012, DECISION-026):** tracked-products CRUD + per-product
+  thresholds + price history + scheduler settings + a manual "check now", on **both** the local API
+  `/api/v1/price-tracking/*` (key-guarded) and the internal `/api/price-tracking/*` (no key, used by the new
+  UI page) — one `priceTrackingRoutes` sub-plugin mounted twice. New `tracked_products` + `price_history`
+  tables (`storage/priceTracking.ts`); a **gated opt-in `PriceScheduler`** (`price/priceScheduler.ts`,
+  default off, `priceTrackingEnabled`/`priceTrackingIntervalHours` config, `unref()` timer) that reads
+  prices, historises them, and fires `HaWebhookNotifier.notifyPriceDrop` (a secret-free `price_drop`
+  webhook) once per threshold crossing (per-product re-arm flag). **This completes the Layer-B data
+  surface** — only BATCH-11 (wiring/ops/YAML/docs/full tests) remains.
 - **The local API key is auto-generated and app-managed** (DECISION-023, user's choice): generated on
   first boot when empty (`bootstrap.ensureLocalApiKey`), persisted as the `local_api_key` config row,
   surfaced **once** (a `local_api_key_generated` log event carrying the key + a stdout line) for retrieval.
@@ -198,7 +208,8 @@ notably **macronome** — can query Chronodrive through it (products, nutrition,
 ### Web UI
 
 - Local access only, no auth
-- Pages: Config, Dashboard, **Operational logs**, **Scan history**, API error/maintenance page
+- Pages: Config, Dashboard, **Operational logs**, **Scan history**, **Suivi des prix** (BL-012 price
+  tracking — `/prices`), API error/maintenance page
   - **Operational logs** (technical): the exchanges with the Chronodrive auth server, the per-step detail
     of each scan (barcode read → search request → product id found → cart/list add request → result), and
     **every token refresh**, with errors shown clearly; **live tail**; filter Auth / Scan / **API
@@ -279,6 +290,7 @@ All Phase 0 architecture decisions and functional clarifications are resolved. S
 | Local API foundation + logging taxonomy (BATCH-7) | RESOLVED | `/api/v1` prefix; encapsulated `X-API-Key` guard; **auto-generated, app-managed key** (not in `ApiConfig`, not config-editable); `chronodrive`/`api_local` log split; `api/local/contract.md` v0.1.0; `GET /api/v1/ping` stub (DECISION-023, BL-008/009, v0.3.0) |
 | Products & nutrition on the local API (BATCH-8) | RESOLVED | `GET /api/v1/search` + `GET /api/v1/products/{eanOrId}` → normalized DTOs; Products `x-api-key`; §5.12.1 nutrition mapper + image-URL builder; EAN-vs-id via `validateEan`; `api/local/contract.md` v0.2.0 (DECISION-024, BL-010, v0.4.0) |
 | Cart & lists on the local API (BATCH-9) | RESOLVED | `GET /cart` + `/cart/nutrition` aggregate, `POST/DELETE /cart/items`, `GET /lists` + `/lists/{id}`, `POST/DELETE /lists/{id}/items`, `POST /recipe-fill`; `ItemRef` id/ean/name + resolution report; batch cart write; cart mapper/aggregate; `api/local/contract.md` v0.3.0 (DECISION-025, BL-011, v0.5.0) |
+| In-gateway price tracking + UI page (BATCH-10) | RESOLVED | tracked-products CRUD + thresholds + history + settings + check-now on both `/api/v1/price-tracking/*` (key) and internal `/api/price-tracking/*`; gated opt-in `PriceScheduler`, re-arm `price_drop` HA webhook, new "Suivi des prix" page; `api/local/contract.md` v0.4.0 (DECISION-026, BL-012, v0.6.0) |
 
 ---
 

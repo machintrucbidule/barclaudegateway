@@ -29,7 +29,7 @@ export interface HaWebhookDeps {
   cooldownMs?: number;
 }
 
-/** The secret-free body POSTed to Home Assistant. */
+/** The secret-free body POSTed to Home Assistant on a critical incident. */
 export interface HaWebhookPayload {
   source: 'BarclaudeGateway';
   severity: 'critical';
@@ -41,6 +41,21 @@ export interface HaWebhookPayload {
   /** True for the config-page "send test" button so HA automations can ignore drills. */
   test: boolean;
 }
+
+/** The secret-free body POSTed on a tracked-product price drop (BL-012). `kind` lets HA route it. */
+export interface HaPriceDropPayload {
+  source: 'BarclaudeGateway';
+  severity: 'info';
+  kind: 'price_drop';
+  productId: string;
+  label?: string;
+  price: number;
+  threshold: number;
+  at: number;
+  test: boolean;
+}
+
+type HaPayload = HaWebhookPayload | HaPriceDropPayload;
 
 export interface HaWebhookResult {
   ok: boolean;
@@ -86,6 +101,48 @@ export class HaWebhookNotifier {
     });
   }
 
+  /**
+   * Alert on a tracked-product price drop (BL-012). No-op when no URL is set. No cooldown here — the
+   * price scheduler's per-product re-arm flag already guarantees one alert per threshold crossing.
+   */
+  async notifyPriceDrop(info: {
+    productId: string;
+    label?: string;
+    price: number;
+    threshold: number;
+    at: number;
+  }): Promise<HaWebhookResult> {
+    const url = this.getUrl().trim();
+    if (url === '') return { ok: false, error: 'No Home Assistant webhook URL configured' };
+    const payload: HaPriceDropPayload = {
+      source: 'BarclaudeGateway',
+      severity: 'info',
+      kind: 'price_drop',
+      productId: info.productId,
+      ...(info.label !== undefined ? { label: info.label } : {}),
+      price: info.price,
+      threshold: info.threshold,
+      at: info.at,
+      test: false,
+    };
+    const result = await this.post(url, payload);
+    this.emit?.({
+      category: 'other',
+      type: 'ha_alert',
+      level: result.ok ? 'info' : 'error',
+      message: result.ok
+        ? `Home Assistant price-drop alert sent (${info.productId} @ ${String(info.price)})`
+        : `Home Assistant price-drop alert failed: ${result.error ?? 'unknown error'}`,
+      detail: {
+        productId: info.productId,
+        price: info.price,
+        threshold: info.threshold,
+        ok: result.ok,
+      },
+    });
+    return result;
+  }
+
   /** Send a clearly-marked sample alert for the config-page test button. Bypasses the cooldown. */
   async sendTest(): Promise<HaWebhookResult> {
     const url = this.getUrl().trim();
@@ -112,7 +169,7 @@ export class HaWebhookNotifier {
     };
   }
 
-  private async post(url: string, payload: HaWebhookPayload): Promise<HaWebhookResult> {
+  private async post(url: string, payload: HaPayload): Promise<HaWebhookResult> {
     try {
       const res = await request(url, {
         method: 'POST',

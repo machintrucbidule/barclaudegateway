@@ -5,6 +5,7 @@ import { ConfigPage } from './pages/ConfigPage.js';
 import { DashboardPage } from './pages/DashboardPage.js';
 import { LogsPage } from './pages/LogsPage.js';
 import { ScanHistoryPage } from './pages/ScanHistoryPage.js';
+import { PriceTrackingPage } from './pages/PriceTrackingPage.js';
 import { MaintenancePage } from './pages/MaintenancePage.js';
 import { MaintenanceBanner } from './components/MaintenanceBanner.js';
 import { useErrorState } from './hooks/useErrorState.js';
@@ -13,6 +14,7 @@ const NAV = [
   { to: '/dashboard', label: 'Tableau de bord' },
   { to: '/config', label: 'Configuration' },
   { to: '/history', label: 'Historique des scans' },
+  { to: '/prices', label: 'Suivi des prix' },
   { to: '/logs', label: 'Logs techniques' },
   { to: '/maintenance', label: 'Maintenance' },
 ] as const;
@@ -51,6 +53,7 @@ export function App(): JSX.Element {
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/config" element={<ConfigPage />} />
           <Route path="/history" element={<ScanHistoryPage />} />
+          <Route path="/prices" element={<PriceTrackingPage />} />
           <Route path="/logs" element={<LogsPage />} />
           <Route path="/maintenance" element={<MaintenancePage />} />
         </Routes>

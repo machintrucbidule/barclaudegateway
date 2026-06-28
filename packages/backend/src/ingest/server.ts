@@ -106,6 +106,8 @@ export function buildServer(deps: ServerDeps, options: ServerOptions = {}): Fast
       emit: deps.emit,
       errorMonitor: deps.errorMonitor,
       haWebhook: deps.haWebhook,
+      priceTracking: deps.priceTracking,
+      priceScheduler: deps.priceScheduler,
     },
   });
 
@@ -114,7 +116,13 @@ export function buildServer(deps: ServerDeps, options: ServerOptions = {}): Fast
   // inside this plugin, so `POST /v1/scan` and the UI `/api/*` routes are unaffected.
   void app.register(localApiRoutes, {
     prefix: '/api/v1',
-    deps: { configStore: deps.configStore, emit: deps.emit, chronodrive: deps.chronodrive },
+    deps: {
+      configStore: deps.configStore,
+      emit: deps.emit,
+      chronodrive: deps.chronodrive,
+      priceTracking: deps.priceTracking,
+      priceScheduler: deps.priceScheduler,
+    },
   });
 
   app.post('/v1/scan', async (request, reply) => {

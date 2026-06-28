@@ -21,6 +21,7 @@ import { ConfigStore } from './storage/config.js';
 import { createCredentialsLoader, CredentialStore } from './storage/credentials.js';
 import { ScanLog } from './storage/scanLog.js';
 import { EventLog } from './storage/eventLog.js';
+import { PriceTrackingStore } from './storage/priceTracking.js';
 import { EventLogBus } from './logging/eventLogBus.js';
 import { EventLogger } from './logging/eventLogger.js';
 import type { EmitEvent } from './logging/eventLogger.js';
@@ -31,6 +32,8 @@ export interface Services {
   configStore: ConfigStore;
   credentialStore: CredentialStore;
   scanLog: ScanLog;
+  /** BL-012: tracked products + price history (price-tracking scheduler + UI page). */
+  priceTracking: PriceTrackingStore;
   /** BL-003: the bounded operational-log journal (auth/scan/system events). */
   eventLog: EventLog;
   /** BL-003: the live operational-log bus the `/api/events/stream` SSE route subscribes to. */
@@ -80,6 +83,7 @@ export function createServices(env: EnvConfig, options: CreateServicesOptions = 
 
   const credentialStore = new CredentialStore(db, env.masterKey);
   const scanLog = new ScanLog(db);
+  const priceTracking = new PriceTrackingStore(db);
   const eventLog = new EventLog(db);
   const eventBus = new EventLogBus();
   const eventLogger = new EventLogger(eventLog, eventBus);
@@ -120,6 +124,7 @@ export function createServices(env: EnvConfig, options: CreateServicesOptions = 
     configStore,
     credentialStore,
     scanLog,
+    priceTracking,
     eventLog,
     eventBus,
     emit,

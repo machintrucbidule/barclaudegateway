@@ -1,8 +1,8 @@
 # BarclaudeGateway Local API ("Layer B") — Contract Specification
 
-**Document version:** 0.3.0
-**Spec status:** Draft (foundation + products/search + cart/lists/recipe shipped; price-tracking planned)
-**Last updated:** 2026-06-28 (BATCH-9 / BL-011 — cart, lists, recipe-fill, budget+nutrition aggregate, DECISION-025)
+**Document version:** 0.4.0
+**Spec status:** Draft (foundation + products/search + cart/lists/recipe + price-tracking shipped — epic data surface complete)
+**Last updated:** 2026-06-28 (BATCH-10 / BL-012 — price tracking & HA alerts + a UI page, DECISION-026)
 **Maintainer:** Ivan Calmels
 
 ---
@@ -208,11 +208,25 @@ Body `{ target: { cart: true } | { listId }, items: ItemRef[] }`. Resolves all i
 then pushes the resolved set to the cart (batched signed delta) **or** the named list (idempotent add) in
 one go. Response `{ target, resolutions, added }`. Journalled with a `recipe_fill` event.
 
-### §5.10 `GET|POST|DELETE /api/v1/price-tracking/*` — price tracking · `PLANNED` (BATCH-10)
+### §5.10 price tracking · `IMPLEMENTED` (BATCH-10)
 
-CRUD over tracked products + per-product thresholds + price history. A gated/opt-in scheduler historises
-prices and fires a **secret-free Home-Assistant webhook** on a qualifying drop (reuses the DECISION-014
-`HaWebhookNotifier`, once-per-incident cooldown).
+CRUD over tracked products + per-product thresholds + price history, plus the gated scheduler's settings.
+A gated/opt-in scheduler (default **off**) historises prices and fires a **secret-free Home-Assistant
+webhook** on a qualifying drop (`kind: 'price_drop'`, severity `info`; reuses the DECISION-014
+`HaWebhookNotifier`). One alert per threshold crossing (the store's per-product re-arm flag).
+
+Exposed on **both** surfaces: `/api/v1/price-tracking/*` (key-guarded, here) **and** the internal
+`/api/price-tracking/*` (no key) the "Suivi des prix" UI page uses — same handlers.
+
+| Method & path | Body / result |
+| ------------- | ------------- |
+| `GET /price-tracking` | `{ products: TrackedProduct[] }` (productId, ean?, label?, threshold, lastPrice?, lastCheckedAt?, armed, lastAlertAt?). |
+| `POST /price-tracking` | `{ ean? \| productId, threshold }` → resolves the product (§5.1/§5.2), tracks it → `TrackedProduct`. |
+| `PUT /price-tracking/{productId}` | `{ threshold }` → updated `TrackedProduct` (404 if not tracked). |
+| `DELETE /price-tracking/{productId}` | → `{ removed }` (also drops its history; 404 if not tracked). |
+| `GET /price-tracking/{productId}/history` | → `{ productId, history: { price, at }[] }` (newest first). |
+| `GET\|PUT /price-tracking/settings` | `{ enabled, intervalHours }` — the scheduler toggle + interval (PUT applies immediately). |
+| `POST /price-tracking/check-now` | → `{ checked, alerts }` — run a price-check cycle on demand. |
 
 ---
 
@@ -220,6 +234,7 @@ prices and fires a **secret-free Home-Assistant webhook** on a qualifying drop (
 
 | Version | Date       | Summary                                                                                     |
 | ------- | ---------- | ------------------------------------------------------------------------------------------- |
+| 0.4.0   | 2026-06-28 | Price tracking (BATCH-10 / BL-012): **§5.10 `IMPLEMENTED`** — tracked-products CRUD + thresholds + history + settings + check-now on both `/api/v1/price-tracking/*` (key-guarded) and the internal `/api/price-tracking/*` (UI page); a gated opt-in scheduler + a `price_drop` HA webhook. |
 | 0.3.0   | 2026-06-28 | Cart & lists (BATCH-9 / BL-011): **§5.3–§5.9 `IMPLEMENTED`** — `GET /cart` + `GET /cart/nutrition` (budget+macros aggregate), `POST/DELETE /cart/items`, `GET /lists` + `/lists/{id}`, `POST/DELETE /lists/{id}/items`, `POST /recipe-fill`. New `ItemRef` write model (id/ean/name) with a per-item resolution report. |
 | 0.2.0   | 2026-06-28 | Products & nutrition (BATCH-8 / BL-010): **§5.1 `GET /search`** and **§5.2 `GET /products/{eanOrId}`** now `IMPLEMENTED` — `ProductSummary` / `NormalizedProduct` + `ProductNutrition` (essential §5.12.1 set), EAN-vs-id disambiguation, absolute image URLs; requires the upstream Products `x-api-key`. |
 | 0.1.0   | 2026-06-28 | Foundation (BATCH-7 / BL-008): prefix `/api/v1`, `X-API-Key` guard, error model, `GET /ping` stub, per-request `api_local` logging. All data endpoints (§5.1–§5.10) specified as `PLANNED`. |

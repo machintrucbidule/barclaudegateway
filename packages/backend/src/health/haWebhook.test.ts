@@ -125,4 +125,40 @@ describe('HaWebhookNotifier', () => {
     expect(result.ok).toBe(false);
     expect(posted).toHaveLength(0);
   });
+
+  it('notifyPriceDrop posts a secret-free price_drop payload (BL-012)', async () => {
+    const notifier = new HaWebhookNotifier({ getUrl: () => HA_URL, now: () => 9 });
+    const result = await notifier.notifyPriceDrop({
+      productId: '91574',
+      label: 'Mozzarella',
+      price: 1.49,
+      threshold: 1.5,
+      at: 9,
+    });
+    expect(result.ok).toBe(true);
+    expect(posted[0]).toMatchObject({
+      source: 'BarclaudeGateway',
+      severity: 'info',
+      kind: 'price_drop',
+      productId: '91574',
+      price: 1.49,
+      threshold: 1.5,
+      test: false,
+    });
+    const serialized = JSON.stringify(posted[0]);
+    expect(serialized).not.toContain('password');
+    expect(serialized).not.toContain('token');
+  });
+
+  it('notifyPriceDrop is a no-op when no URL is configured', async () => {
+    const notifier = new HaWebhookNotifier({ getUrl: () => '' });
+    const result = await notifier.notifyPriceDrop({
+      productId: 'P',
+      price: 1,
+      threshold: 2,
+      at: 0,
+    });
+    expect(result.ok).toBe(false);
+    expect(posted).toHaveLength(0);
+  });
 });

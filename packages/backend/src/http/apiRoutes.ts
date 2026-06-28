@@ -37,6 +37,9 @@ import type { EventLogBus } from '../logging/eventLogBus.js';
 import type { EmitEvent } from '../logging/eventLogger.js';
 import type { ErrorMonitor } from '../health/errorMonitor.js';
 import type { HaWebhookNotifier } from '../health/haWebhook.js';
+import type { PriceTrackingStore } from '../storage/priceTracking.js';
+import type { PriceScheduler } from '../price/priceScheduler.js';
+import { priceTrackingRoutes } from './priceTrackingRoutes.js';
 
 export interface ApiDeps {
   chronodrive: ChronodriveClient;
@@ -57,6 +60,10 @@ export interface ApiDeps {
   errorMonitor: ErrorMonitor;
   /** Phase 5: the Home Assistant alert sender (also drives the config-page "send test"). */
   haWebhook: HaWebhookNotifier;
+  /** BL-012: tracked products + price history (price-tracking CRUD + the "Suivi des prix" page). */
+  priceTracking: PriceTrackingStore;
+  /** BL-012: the gated price scheduler (manual "check now" + settings apply). */
+  priceScheduler: PriceScheduler;
 }
 
 const SCAN_PAGE_SIZE_DEFAULT = 100;
@@ -212,6 +219,18 @@ function parseDestinationsBody(
 
 export const apiRoutes: FastifyPluginAsync<{ deps: ApiDeps }> = (app, opts) => {
   const { deps } = opts;
+
+  // BL-012: price-tracking CRUD on the internal UI API (no key) — the "Suivi des prix" page calls this.
+  void app.register(priceTrackingRoutes, {
+    prefix: '/price-tracking',
+    deps: {
+      store: deps.priceTracking,
+      chronodrive: deps.chronodrive,
+      scheduler: deps.priceScheduler,
+      configStore: deps.configStore,
+      emit: deps.emit,
+    },
+  });
 
   const configPayload = (): ConfigResponse => ({
     ...toApiConfig(deps.configStore.readAppConfig()),

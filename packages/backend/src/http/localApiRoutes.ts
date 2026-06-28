@@ -45,6 +45,9 @@ import { ChronodriveError, NotFoundError } from './errors.js';
 import { validateEan } from '../ingest/ean.js';
 import { toNormalizedProduct, toProductSummary } from '../chronodrive/productMapper.js';
 import { aggregateCartNutrition, toNormalizedCart } from '../chronodrive/cartMapper.js';
+import type { PriceTrackingStore } from '../storage/priceTracking.js';
+import type { PriceScheduler } from '../price/priceScheduler.js';
+import { priceTrackingRoutes } from './priceTrackingRoutes.js';
 
 export interface LocalApiDeps {
   /** Source of the auto-managed `local_api_key` (read fresh per request so rotation needs no restart). */
@@ -53,6 +56,10 @@ export interface LocalApiDeps {
   emit: EmitEvent;
   /** BL-010: the upstream Chronodrive client serving product search + product sheets. */
   chronodrive: ChronodriveClient;
+  /** BL-012: tracked products + price history (price-tracking CRUD, key-guarded here). */
+  priceTracking: PriceTrackingStore;
+  /** BL-012: the gated price scheduler (manual "check now" + settings apply). */
+  priceScheduler: PriceScheduler;
 }
 
 /** Send a clean 502 for a failed upstream Chronodrive call, journalling it as an `chronodrive` error. */
@@ -175,6 +182,19 @@ export const localApiRoutes: FastifyPluginAsync<{ deps: LocalApiDeps }> = (app, 
   app.get('/ping', async () => {
     const body: LocalApiStatus = { status: 'ok', version: 1 };
     return body;
+  });
+
+  // BL-012: price-tracking CRUD on the local API (key-guarded by the onRequest hook above), for
+  // external clients. Same handlers as the internal `/api/price-tracking/*` the UI page uses.
+  void app.register(priceTrackingRoutes, {
+    prefix: '/price-tracking',
+    deps: {
+      store: deps.priceTracking,
+      chronodrive: deps.chronodrive,
+      scheduler: deps.priceScheduler,
+      configStore: deps.configStore,
+      emit: deps.emit,
+    },
   });
 
   // BL-010 — product search. Returns a page of lean summaries (fetch the sheet for nutrition).

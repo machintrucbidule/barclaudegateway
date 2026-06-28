@@ -6,7 +6,61 @@
 >
 > Newest entries on top. Nothing here is active work — the active backlog is [`BACKLOG.md`](./BACKLOG.md).
 >
-> Last updated: 2026-06-28 (BATCH-9 — BL-011 cart & lists on the local API, DECISION-025, app v0.5.0)
+> Last updated: 2026-06-28 (BATCH-10 — BL-012 in-gateway price tracking & HA alerts + a UI page, DECISION-026, app v0.6.0)
+
+---
+
+## BATCH-10 — In-gateway price tracking & alerts + a UI page (P2) — shipped 2026-06-28
+
+> Developed via loop prompt 2 on branch `feature/batch-7-local-api-foundation` (app **v0.6.0**). UC7: the
+> alert logic lives in the gateway — historise tracked-product prices, alert on a drop via a Home
+> Assistant webhook — plus, at the user's request, a **"Suivi des prix"** UI page. Recorded as
+> **DECISION-026**. Completes the DECISION-022 Layer-B **data** surface; only BATCH-11 (wiring/ops) remains.
+
+### [BL-012] Price-history store, per-product thresholds, scheduler, and HA webhook alert
+
+- Type: Evolution · Priority: P2 · Batch: BATCH-10 · Source: user remark (2026-06-28)
+- **Date shipped**: 2026-06-28
+- **Approved design decisions (DECISION-026)**: CRUD on **both** surfaces (user: *"les deux"*) — internal
+  `/api/price-tracking/*` (no key, the page) + local `/api/v1/price-tracking/*` (key-guarded, external);
+  **a UI page** (user's explicit request); gated **opt-in** scheduler (default off); **re-arm** alert
+  (one per crossing).
+- **What was actually done**:
+  - **Storage** (`storage/db.ts` + new `storage/priceTracking.ts`): `tracked_products` + `price_history`
+    tables; `PriceTrackingStore` (add/get/list/remove/updateThreshold/recordPrice/history/setArmed/
+    markAlerted/prune) modelled on the scan/event journals; price-history prune added to the daily prune.
+  - **Config** (`config/defaults.ts`): `priceTrackingEnabled` (default false) + `priceTrackingIntervalHours`
+    (default 12) — backend-managed, NOT in the shared `ApiConfig`, **excluded from `appConfigToEntries`** so
+    `PUT /api/config` can't clobber the page-managed settings (same rule as `localApiKey`).
+  - **Scheduler** (new `price/priceScheduler.ts`): `PriceScheduler` (`runOnce`/`start`/`stop`/`applyConfig`/
+    `trigger`), `unref()` timer like `TokenLifecycle`, gated on the enabled flag (the epic's sanctioned
+    background exception). Per cycle: `getProduct` → `prices.defaultPrice` → `recordPrice` + `price_check`
+    log; on `price ≤ threshold && armed` → `notifyPriceDrop` + disarm; re-arm when the price recovers.
+  - **HA alert** (`health/haWebhook.ts`): added `notifyPriceDrop` posting a secret-free
+    `{ kind: 'price_drop', severity: 'info', productId, label?, price, threshold, at }` (additive; the
+    critical-error path unchanged). No cooldown — the re-arm flag is the dedup.
+  - **Routes** (new `http/priceTrackingRoutes.ts`): one sub-plugin (GET list, POST add by ean/productId →
+    resolve via `getProductByEan`/`getProduct`, PUT threshold, DELETE, GET history, GET/PUT settings →
+    `scheduler.applyConfig()`, POST check-now → `scheduler.trigger()`) registered on **both** `apiRoutes`
+    (`/api/price-tracking`, no key) and `localApiRoutes` (`/api/v1/price-tracking`, key-guarded). `ApiDeps`
+    + `LocalApiDeps` gained `priceTracking` + `priceScheduler`; wired in `server.ts`/`main.ts`/`bootstrap.ts`.
+  - **Shared DTOs** (`api/contract.ts`): `TrackedProduct`/`TrackedProductsResponse`/`AddTrackedProductInput`/
+    `PricePoint`/`PriceHistoryResponse`/`PriceTrackingSettings`/`CheckNowResult`.
+  - **Frontend** (new `pages/PriceTrackingPage.tsx` + `App.tsx` nav/route + `api/client.ts`): the **"Suivi
+    des prix"** page (`/prices`) — settings (Switch + interval + "Vérifier maintenant"), an add-by-EAN form,
+    and a table (label, EAN, prix actuel, seuil inline-edit, dernier contrôle, état armé/alerté, Supprimer).
+  - **No new `LogEventType`** (reuses `price_check`/`ha_alert`/`config_change`).
+- **Acceptance criteria — met**: adding a tracked product records prices over time; a price at/below the
+  threshold fires exactly one HA alert (re-arm dedup); the scheduler is opt-in (default off) and `unref()`d
+  (no unbounded calls); CRUD + history are visible in the UI and on `/logs`; the local surface is
+  key-guarded.
+- **Tests** (all green: **240** total — 216 backend + 24 frontend; ~16 new): `storage/priceTracking.test.ts`;
+  `price/priceScheduler.test.ts` (drop→alert→disarm→re-arm, no-price skip); `health/haWebhook.test.ts`
+  (`notifyPriceDrop` payload); `http/apiRoutes.test.ts` (internal CRUD + local key-guard);
+  `pages/PriceTrackingPage.test.tsx` (list/add/remove/settings). Lint/typecheck/format/build green.
+- **Docs/specs**: `api/local/contract.md` → v0.4.0 (§5.10 `IMPLEMENTED`); `decisions.md` (DECISION-026);
+  `PROJECT_CONTEXT.md`. Root `package.json` **0.5.0 → 0.6.0**. Upstream `contract.md` unchanged.
+- **Commit/PR**: branch `feature/batch-7-local-api-foundation` (loop prompt 2, 2026-06-28).
 
 ---
 

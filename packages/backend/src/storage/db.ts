@@ -1,11 +1,13 @@
 /**
  * SQLite storage via Node's built-in `node:sqlite` (DECISION-003, design gate).
  *
- * Single file on a Docker volume in production, `:memory:` in tests. Four tables:
- *  - `config`      — static Chronodrive API params (seeded from code, editable in Phase 4);
- *  - `credentials` — the AES-256-GCM encrypted email/password (single row);
- *  - `scan_log`    — bounded scan journal (retention enforced in scanLog.ts);
- *  - `event_log`   — bounded operational-log journal (BL-003, retention enforced in eventLog.ts).
+ * Single file on a Docker volume in production, `:memory:` in tests. Tables:
+ *  - `config`           — static Chronodrive API params (seeded from code, editable in Phase 4);
+ *  - `credentials`      — the AES-256-GCM encrypted email/password (single row);
+ *  - `scan_log`         — bounded scan journal (retention enforced in scanLog.ts);
+ *  - `event_log`        — bounded operational-log journal (BL-003, retention enforced in eventLog.ts);
+ *  - `tracked_products` — products under price tracking + their thresholds (BL-012);
+ *  - `price_history`    — bounded price-point history per tracked product (BL-012).
  *
  * `node:sqlite` is experimental in Node 24; it emits an ExperimentalWarning at runtime, which is
  * expected and accepted.
@@ -51,6 +53,27 @@ CREATE TABLE IF NOT EXISTS event_log (
 
 CREATE INDEX IF NOT EXISTS idx_event_log_at ON event_log (at);
 CREATE INDEX IF NOT EXISTS idx_event_log_category ON event_log (category, id);
+
+CREATE TABLE IF NOT EXISTS tracked_products (
+  product_id      TEXT PRIMARY KEY,
+  ean             TEXT,
+  label           TEXT,
+  threshold       REAL NOT NULL,
+  created_at      INTEGER NOT NULL,
+  last_price      REAL,
+  last_checked_at INTEGER,
+  alert_armed     INTEGER NOT NULL DEFAULT 1,
+  last_alert_at   INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS price_history (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  product_id TEXT NOT NULL,
+  price      REAL NOT NULL,
+  at         INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_price_history_product ON price_history (product_id, at);
 `;
 
 /** Open (or create) the database file and apply the schema migrations. */

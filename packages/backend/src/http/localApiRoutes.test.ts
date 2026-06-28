@@ -10,6 +10,9 @@ import { EventLogBus } from '../logging/eventLogBus.js';
 import { EventLogger } from '../logging/eventLogger.js';
 import { HttpClient } from './client.js';
 import { ChronodriveClient } from '../chronodrive/client.js';
+import { PriceTrackingStore } from '../storage/priceTracking.js';
+import { PriceScheduler } from '../price/priceScheduler.js';
+import { HaWebhookNotifier } from '../health/haWebhook.js';
 import { localApiRoutes } from './localApiRoutes.js';
 
 const KEY = 'test-local-api-key';
@@ -35,11 +38,19 @@ function buildHarness(): Harness {
     getToken: async () => 'TOKEN',
     siteId: '1',
   });
+  const priceTracking = new PriceTrackingStore(db);
+  const priceScheduler = new PriceScheduler({
+    chronodrive,
+    store: priceTracking,
+    notifier: new HaWebhookNotifier({ getUrl: () => '' }),
+    configStore,
+    emit,
+  });
 
   const app = Fastify();
   void app.register(localApiRoutes, {
     prefix: '/api/v1',
-    deps: { configStore, emit, chronodrive },
+    deps: { configStore, emit, chronodrive, priceTracking, priceScheduler },
   });
   return { app, db, configStore, eventLog };
 }

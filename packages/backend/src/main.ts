@@ -19,6 +19,7 @@ import { DestinationsStore } from './storage/destinations.js';
 import { ErrorMonitor } from './health/errorMonitor.js';
 import { HaWebhookNotifier } from './health/haWebhook.js';
 import { runHealthSelfTest } from './health/selfTest.js';
+import { PriceScheduler } from './price/priceScheduler.js';
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1_000;
 /** How often the background health self-test probes Chronodrive (contract.md §7.1 suggests ~6h). */
@@ -33,12 +34,14 @@ export async function main(): Promise<void> {
   const env = loadEnv();
   const services = createServices(env);
 
-  // Both bounded journals are pruned on startup and daily (DECISION-003 + BL-003 retention).
+  // The bounded journals + price history are pruned on startup and daily (DECISION-003 + BL-003/012).
   services.scanLog.prune();
   services.eventLog.prune();
+  services.priceTracking.prune();
   const dailyPrune = setInterval(() => {
     services.scanLog.prune();
     services.eventLog.prune();
+    services.priceTracking.prune();
   }, ONE_DAY_MS);
   dailyPrune.unref();
 
@@ -104,6 +107,18 @@ export async function main(): Promise<void> {
   const healthTimer = setInterval(runSelfTest, HEALTH_SELF_TEST_MS);
   healthTimer.unref();
 
+  // BL-012: the gated price-tracking scheduler. start() self-gates on `priceTrackingEnabled` (default
+  // off), so an idle install arms no timer; the "Suivi des prix" page toggles it (via applyConfig) and
+  // a manual "check now" runs a cycle on demand. The timer is unref()'d like the others.
+  const priceScheduler = new PriceScheduler({
+    chronodrive: services.chronodrive,
+    store: services.priceTracking,
+    notifier: haWebhook,
+    configStore: services.configStore,
+    emit: services.emit,
+  });
+  priceScheduler.start();
+
   const pipeline = new IngestPipeline({
     chronodrive: services.chronodrive,
     scanLog: services.scanLog,
@@ -127,6 +142,8 @@ export async function main(): Promise<void> {
       emit: services.emit,
       errorMonitor,
       haWebhook,
+      priceTracking: services.priceTracking,
+      priceScheduler,
       uiDir: resolveUiDir(),
     },
     { logger: true },
