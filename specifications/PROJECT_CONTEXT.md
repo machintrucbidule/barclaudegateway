@@ -43,7 +43,9 @@ barclaudegateway/
 > workflow (`.github/workflows/release.yml`, tag-triggered) + a no-push PR build check
 > (`docker-build.yml`), the Portainer stack (`deploy/stack.yml`), and `docs/deployment.md`
 > (Phase 6, DECISION-015). Docker is still never built or tested on Windows — only CI builds it.
-> The version started at **0.0.1**; **current published version is `0.2.1`** — it ships **BATCH-5**
+> The version started at **0.0.1**; **current published version is `0.2.2`** — it ships **BATCH-6**
+> (BL-007: lazy mode no longer force-fetches the shopping lists on the config page; cached display +
+> manual `POST /api/config/destinations/refresh`, refines DECISION-021). `0.2.1` shipped **BATCH-5**
 > (configurable auth-token policy `auth_mode` lazy vs keep-alive, DECISION-021; the first middleware
 > code change since `0.1.1`). `0.2.0` was the maintenance-loop milestone: **BATCH-1** (ESP32 hardware
 > validated; LED-only Home-Assistant-integrated scanner firmware, DECISION-020) and **BATCH-4**
