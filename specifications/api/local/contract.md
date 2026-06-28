@@ -1,8 +1,8 @@
 # BarclaudeGateway Local API ("Layer B") — Contract Specification
 
-**Document version:** 0.1.0
-**Spec status:** Draft (foundation shipped; data endpoints planned)
-**Last updated:** 2026-06-28 (BATCH-7 / BL-008, DECISION-022/023)
+**Document version:** 0.2.0
+**Spec status:** Draft (foundation + products/search shipped; cart/lists/price-tracking planned)
+**Last updated:** 2026-06-28 (BATCH-8 / BL-010 — search + product sheet, DECISION-024)
 **Maintainer:** Ivan Calmels
 
 ---
@@ -113,22 +113,53 @@ GET /api/v1/ping            →  200  { "status": "ok", "version": 1 }
 
 ---
 
+### §5.1 `GET /api/v1/search?q=` — product search · `IMPLEMENTED` (BATCH-8)
+
+Keyword **or** EAN search. Resolves via upstream `GET /v1/products?searchTerm=` (chronodrive §5.13), which
+returns full product objects; the local API projects each to a lean **`ProductSummary`** (identity,
+`weightKg`, `price`, `stock`/`isEligible`, one `image` URL) — fetch §5.2 for nutrition. Empty `q` →
+`400 bad_request`. Requires the upstream **Products** `x-api-key`.
+
+```
+GET /api/v1/search?q=mozzarella
+→ 200 {
+    "products": [ { "id": "91574", "eans": ["3596710335510"], "name": "Mozzarella…",
+                    "brand": "AUCHAN", "unitQuantityLabel": "125 g", "weightKg": 0.125,
+                    "price": { "default": 1.79, "lastPeriodLowest": 1.79 }, "stock": "HIGH_STOCK",
+                    "isEligible": true, "image": "https://static1.chronodrive.com/img/PM/P/0/74/0P_91574.gif" } ],
+    "page": { "number": 1, "size": 20, "totalElements": 1, "totalPages": 1, "hasNext": false }
+  }
+```
+
+### §5.2 `GET /api/v1/products/{eanOrId}` — product sheet · `IMPLEMENTED` (BATCH-8)
+
+The full normalized **`NormalizedProduct`**: identity, `weightKg`, `price` (incl. `lastPeriodLowest`),
+`stock`/`remainingStock`/`isEligible`, **`nutrition`** (the essential §5.12.1 set: `energyKj`/`energyKcal`,
+`fat`, `saturates`, `carbohydrate`, `sugars`, `fibre`, `protein`, `salt`, `nutriScore`, `allergens`,
+`origin`, per the `base` — a field is **absent** when the manufacturer did not declare it), `ingredients`,
+and absolute `images` (`thumbnails`/`views`/`zooms`). **Disambiguation:** if `{eanOrId}` is a valid GS1
+barcode (`validateEan`) it resolves by EAN via upstream `GET /v1/products?searchTerm=` (§5.13); otherwise it
+is treated as a Chronodrive product id via `GET /v1/products/{id}` (§5.12). Not found → `404 not_found`.
+Requires the **Products** `x-api-key`.
+
+```
+GET /api/v1/products/3596710335510
+→ 200 {
+    "id": "91574", "eans": ["3596710335510"], "name": "Mozzarella di bufala campana AOP",
+    "brand": "AUCHAN", "unitQuantityLabel": "125 g", "weightKg": 0.125,
+    "price": { "default": 1.79, "perUnitMeasure": 14.32, "lastPeriodLowest": 1.79, "vatRate": 5.5 },
+    "stock": "HIGH_STOCK", "remainingStock": 228, "isEligible": true,
+    "nutrition": { "base": "100 g", "energyKcal": 262, "energyKj": 1084, "fat": 23, "saturates": 16,
+                   "carbohydrate": 0.7, "sugars": 0.7, "protein": 13, "salt": 0.57, "nutriScore": "C",
+                   "allergens": "Contient : Lait", "origin": "ITALIE pour AUCHAN SAS OIA" },
+    "ingredients": "Ingrédients : LAIT…",
+    "images": { "thumbnails": ["https://static1.chronodrive.com/…"], "views": ["…"], "zooms": ["…"] }
+  }
+```
+
 > The endpoints below are **`PLANNED`** — specified now so this contract is the single design target;
 > the handlers are added per batch. Shapes are normalized DTOs (defined in `@barclaudegateway/shared`),
 > built from the upstream sections cited in parentheses.
-
-### §5.1 `GET /api/v1/search?q=` — product search · `PLANNED` (BATCH-8)
-
-Keyword **or** EAN search. Resolves via upstream `GET /v1/products?searchTerm=` (chronodrive §5.13/§5.1).
-Returns a list of normalized product summaries (identity, weight, price, stock/eligibility, image URL).
-
-### §5.2 `GET /api/v1/products/{eanOrId}` — product sheet · `PLANNED` (BATCH-8)
-
-Full normalized product: identity, **weight/unitQuantity**, price (incl. `lastPeriodLowestPrice`),
-stock/eligibility, **nutrition** (mapped from `characteristics.features[]` per chronodrive §5.12.1 — energy
-kJ/kcal, fat, saturates, carbs, sugars, fibre, protein, salt, Nutri-Score, allergens, origin; per 100 g),
-ingredients, allergens, and absolute image URLs (`https://static1.chronodrive.com/` + path). Unknown EAN →
-`404 not_found`. Upstream: chronodrive §5.12/§5.13.
 
 ### §5.3 `GET /api/v1/cart` — read cart · `PLANNED` (BATCH-9)
 
@@ -172,4 +203,5 @@ prices and fires a **secret-free Home-Assistant webhook** on a qualifying drop (
 
 | Version | Date       | Summary                                                                                     |
 | ------- | ---------- | ------------------------------------------------------------------------------------------- |
+| 0.2.0   | 2026-06-28 | Products & nutrition (BATCH-8 / BL-010): **§5.1 `GET /search`** and **§5.2 `GET /products/{eanOrId}`** now `IMPLEMENTED` — `ProductSummary` / `NormalizedProduct` + `ProductNutrition` (essential §5.12.1 set), EAN-vs-id disambiguation, absolute image URLs; requires the upstream Products `x-api-key`. |
 | 0.1.0   | 2026-06-28 | Foundation (BATCH-7 / BL-008): prefix `/api/v1`, `X-API-Key` guard, error model, `GET /ping` stub, per-request `api_local` logging. All data endpoints (§5.1–§5.10) specified as `PLANNED`. |

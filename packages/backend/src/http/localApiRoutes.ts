@@ -19,17 +19,47 @@
 
 import { Buffer } from 'node:buffer';
 import { timingSafeEqual } from 'node:crypto';
-import type { FastifyPluginAsync } from 'fastify';
-import type { LocalApiError, LocalApiStatus } from '@barclaudegateway/shared';
+import type { FastifyPluginAsync, FastifyReply } from 'fastify';
+import type {
+  LocalApiError,
+  LocalApiStatus,
+  ProductSearchResponse,
+} from '@barclaudegateway/shared';
 import { LOCAL_API_KEY_HEADER } from '@barclaudegateway/shared';
 import type { ConfigStore } from '../storage/config.js';
 import type { EmitEvent } from '../logging/eventLogger.js';
+import type { LogEventType } from '@barclaudegateway/shared';
+import type { ChronodriveClient } from '../chronodrive/client.js';
+import { ChronodriveError, NotFoundError } from './errors.js';
+import { validateEan } from '../ingest/ean.js';
+import { toNormalizedProduct, toProductSummary } from '../chronodrive/productMapper.js';
 
 export interface LocalApiDeps {
   /** Source of the auto-managed `local_api_key` (read fresh per request so rotation needs no restart). */
   configStore: ConfigStore;
   /** BL-009: emit point — every inbound request is journalled as an `api_local` event. */
   emit: EmitEvent;
+  /** BL-010: the upstream Chronodrive client serving product search + product sheets. */
+  chronodrive: ChronodriveClient;
+}
+
+/** Send a clean 502 for a failed upstream Chronodrive call, journalling it as an `chronodrive` error. */
+function upstreamFailure(
+  reply: FastifyReply,
+  emit: EmitEvent,
+  type: LogEventType,
+  context: string,
+  err: unknown,
+): FastifyReply {
+  const category = err instanceof ChronodriveError ? err.category : 'unknown';
+  emit({
+    category: 'chronodrive',
+    type,
+    level: 'error',
+    message: `${context} failed (${category})`,
+  });
+  const body: LocalApiError = { error: 'upstream Chronodrive error', code: 'upstream_error' };
+  return reply.code(502).send(body);
 }
 
 /** Constant-time compare of the stored key against the provided header value. Empty/absent key = locked. */
@@ -81,6 +111,80 @@ export const localApiRoutes: FastifyPluginAsync<{ deps: LocalApiDeps }> = (app, 
   app.get('/ping', async () => {
     const body: LocalApiStatus = { status: 'ok', version: 1 };
     return body;
+  });
+
+  // BL-010 — product search. Returns a page of lean summaries (fetch the sheet for nutrition).
+  app.get('/search', async (request, reply) => {
+    const q = (request.query as { q?: unknown } | undefined)?.q;
+    if (typeof q !== 'string' || q.trim().length === 0) {
+      const body: LocalApiError = { error: 'query parameter q is required', code: 'bad_request' };
+      return reply.code(400).send(body);
+    }
+    const term = q.trim();
+    try {
+      const res = await deps.chronodrive.searchProducts(term);
+      deps.emit({
+        category: 'chronodrive',
+        type: 'product_search',
+        level: 'info',
+        message: `search "${term}" → ${res.content.length} result(s)`,
+      });
+      const response: ProductSearchResponse = {
+        products: res.content.map(toProductSummary),
+        page: {
+          number: res.page.number,
+          size: res.page.size,
+          totalElements: res.page.totalElements,
+          totalPages: res.page.totalPages,
+          hasNext: res.page.hasNext,
+        },
+      };
+      return response;
+    } catch (err) {
+      return upstreamFailure(reply, deps.emit, 'product_search', `search "${term}"`, err);
+    }
+  });
+
+  // BL-010 — product sheet by EAN or Chronodrive product id. An EAN (valid GS1 barcode) resolves via
+  // the upstream search (§5.13); anything else is treated as a product id (§5.12).
+  app.get('/products/:eanOrId', async (request, reply) => {
+    const { eanOrId } = request.params as { eanOrId: string };
+    const ean = validateEan(eanOrId);
+    try {
+      const product =
+        ean.ok && ean.normalized !== undefined
+          ? await deps.chronodrive.getProductByEan(ean.normalized)
+          : await deps.chronodrive.getProduct(eanOrId);
+      if (product === null) {
+        deps.emit({
+          category: 'chronodrive',
+          type: 'product_lookup',
+          level: 'info',
+          message: `product lookup ${eanOrId} → not found`,
+        });
+        const body: LocalApiError = { error: 'product not found', code: 'not_found' };
+        return reply.code(404).send(body);
+      }
+      deps.emit({
+        category: 'chronodrive',
+        type: 'product_lookup',
+        level: 'info',
+        message: `product lookup ${eanOrId} → ${product.id}`,
+      });
+      return toNormalizedProduct(product);
+    } catch (err) {
+      if (err instanceof NotFoundError) {
+        deps.emit({
+          category: 'chronodrive',
+          type: 'product_lookup',
+          level: 'info',
+          message: `product lookup ${eanOrId} → not found`,
+        });
+        const body: LocalApiError = { error: 'product not found', code: 'not_found' };
+        return reply.code(404).send(body);
+      }
+      return upstreamFailure(reply, deps.emit, 'product_lookup', `product lookup ${eanOrId}`, err);
+    }
   });
 
   return Promise.resolve();

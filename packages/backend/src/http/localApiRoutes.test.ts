@@ -8,6 +8,8 @@ import { ConfigStore } from '../storage/config.js';
 import { EventLog } from '../storage/eventLog.js';
 import { EventLogBus } from '../logging/eventLogBus.js';
 import { EventLogger } from '../logging/eventLogger.js';
+import { HttpClient } from './client.js';
+import { ChronodriveClient } from '../chronodrive/client.js';
 import { localApiRoutes } from './localApiRoutes.js';
 
 const KEY = 'test-local-api-key';
@@ -26,9 +28,19 @@ function buildHarness(): Harness {
   configStore.set(CONFIG_KEYS.localApiKey, KEY);
   const eventLog = new EventLog(db);
   const emit = new EventLogger(eventLog, new EventLogBus()).emit;
+  // A client built but never called by these guard/stub tests (product routes are covered elsewhere).
+  const chronodrive = new ChronodriveClient({
+    http: new HttpClient(),
+    config: configStore.readAppConfig(),
+    getToken: async () => 'TOKEN',
+    siteId: '1',
+  });
 
   const app = Fastify();
-  void app.register(localApiRoutes, { prefix: '/api/v1', deps: { configStore, emit } });
+  void app.register(localApiRoutes, {
+    prefix: '/api/v1',
+    deps: { configStore, emit, chronodrive },
+  });
   return { app, db, configStore, eventLog };
 }
 

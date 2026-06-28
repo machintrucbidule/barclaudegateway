@@ -31,7 +31,13 @@ const CONFIG: AppConfig = {
   scope: 'openid',
   identityBaseUrl: 'https://connect.test.local',
   apiBaseUrl: 'https://api.test.local/v1',
-  apiKeys: { search: 'SK', customerCartRead: 'CCR', cartWrite: 'CW', shoppingLists: 'SL' },
+  apiKeys: {
+    search: 'SK',
+    products: 'PK',
+    customerCartRead: 'CCR',
+    cartWrite: 'CW',
+    shoppingLists: 'SL',
+  },
   siteMode: 'DRIVE',
   siteId: '1016',
   haWebhookUrl: '',
@@ -479,6 +485,106 @@ describe('api routes (fastify.inject)', () => {
     ).json();
     expect(res.total).toBe(1);
     expect(res.events[0].category).toBe('chronodrive');
+  });
+
+  it('local API: search + product sheet (BL-010), guarded, logged as chronodrive', async () => {
+    h.configStore.set(CONFIG_KEYS.localApiKey, 'LK');
+    const FULL_PRODUCT = {
+      id: '91574',
+      labels: { productLabel: 'Mozzarella', brandLabel: 'AUCHAN', unitQuantityLabel: '125 g' },
+      eans: ['3596710335510'],
+      prices: { defaultPrice: 1.79, lastPeriodLowestPrice: 1.79 },
+      stock: 'HIGH_STOCK',
+      isEligible: true,
+      packaging: { unit: 'kg', weight: 0.125 },
+      images: { views: ['img/PM/P/0/74/0P_91574.gif'] },
+      characteristics: {
+        ingredients: 'LAIT…',
+        features: [
+          { code: '563', value: '100 g' },
+          { code: '243', value: '262' },
+          { code: '168', value: '13' },
+          { code: '520', value: 'C' },
+        ],
+      },
+    };
+    const searchBody = {
+      page: {
+        size: 20,
+        totalElements: 1,
+        totalPages: 1,
+        number: 1,
+        hasNext: false,
+        isEmpty: false,
+      },
+      content: [FULL_PRODUCT],
+    };
+
+    // No key → 401, before any upstream call.
+    expect((await h.app.inject({ method: 'GET', url: '/api/v1/products/91574' })).statusCode).toBe(
+      401,
+    );
+
+    // Missing q → 400.
+    const bad = await h.app.inject({
+      method: 'GET',
+      url: '/api/v1/search',
+      headers: { 'x-api-key': 'LK' },
+    });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().code).toBe('bad_request');
+
+    // Search (keyword) → 200 summaries.
+    pool.intercept({ path: pathIs('/v1/products'), method: 'GET' }).reply(200, searchBody);
+    const search = await h.app.inject({
+      method: 'GET',
+      url: '/api/v1/search?q=mozzarella',
+      headers: { 'x-api-key': 'LK' },
+    });
+    expect(search.statusCode).toBe(200);
+    expect(search.json().products[0]).toMatchObject({ id: '91574', weightKg: 0.125 });
+    expect(search.json().products[0].image).toContain('static1.chronodrive.com');
+
+    // Product by EAN → 200 normalized with mapped nutrition.
+    pool.intercept({ path: pathIs('/v1/products'), method: 'GET' }).reply(200, searchBody);
+    const byEan = await h.app.inject({
+      method: 'GET',
+      url: '/api/v1/products/3596710335510',
+      headers: { 'x-api-key': 'LK' },
+    });
+    expect(byEan.statusCode).toBe(200);
+    expect(byEan.json().nutrition).toMatchObject({ energyKcal: 262, protein: 13, nutriScore: 'C' });
+    expect(byEan.json().weightKg).toBe(0.125);
+
+    // Product by id → 200.
+    pool.intercept({ path: '/v1/products/91574', method: 'GET' }).reply(200, FULL_PRODUCT);
+    const byId = await h.app.inject({
+      method: 'GET',
+      url: '/api/v1/products/91574',
+      headers: { 'x-api-key': 'LK' },
+    });
+    expect(byId.statusCode).toBe(200);
+    expect(byId.json().id).toBe('91574');
+
+    // Unknown EAN (empty upstream content) → clean 404.
+    pool.intercept({ path: pathIs('/v1/products'), method: 'GET' }).reply(200, {
+      page: { size: 1, totalElements: 0, totalPages: 0, number: 1, hasNext: false, isEmpty: true },
+      content: [],
+    });
+    const missing = await h.app.inject({
+      method: 'GET',
+      url: '/api/v1/products/0000000000000',
+      headers: { 'x-api-key': 'LK' },
+    });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json().code).toBe('not_found');
+
+    // The upstream calls were journalled as `chronodrive` (API Chronodrive) and are filterable.
+    const cd = (
+      await h.app.inject({ method: 'GET', url: '/api/events?category=chronodrive' })
+    ).json();
+    expect(cd.total).toBeGreaterThanOrEqual(1);
+    expect(['product_search', 'product_lookup']).toContain(cd.events[0].type);
   });
 
   it('PUT /api/config journals a config_change event (BL-003)', async () => {

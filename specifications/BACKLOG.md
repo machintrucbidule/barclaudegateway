@@ -9,9 +9,9 @@
 > [ops/grooming](./prompts/loop-3-ops-grooming.md). Schema and process: [`ROADMAP.md`](./ROADMAP.md) §
 > "Iterative maintenance loop".
 >
-> Last updated: 2026-06-28 (**BATCH-7 shipped** — BL-008 local API foundation + BL-009 logging taxonomy,
-> DECISION-023, app v0.3.0; moved to `BACKLOG_ARCHIVE.md`. The new top batch is **BATCH-8** — develop it
-> via loop prompt 2.)
+> Last updated: 2026-06-28 (**BATCH-8 shipped** — BL-010 products & nutrition on the local API,
+> DECISION-024, app v0.4.0; moved to `BACKLOG_ARCHIVE.md`. The new top batch is **BATCH-9** (cart &
+> lists) — develop it via loop prompt 2.)
 
 ---
 
@@ -38,8 +38,8 @@
 
 > Widen the gateway into a **local personal API** (its own "Layer B" contract) querying Chronodrive
 > (product, nutrition, price, cart, lists), enabling the macronome integration. Upstream knowledge is
-> already captured in `contract.md` v1.5.0 (HAR 2026-06-28). Batches are priority-ordered; **BATCH-8 is
-> the next to develop** (BATCH-7 shipped — see `BACKLOG_ARCHIVE.md`). Develop one batch per loop-2 run.
+> already captured in `contract.md` v1.5.0 (HAR 2026-06-28). Batches are priority-ordered; **BATCH-9 is
+> the next to develop** (BATCH-7/8 shipped — see `BACKLOG_ARCHIVE.md`). Develop one batch per loop-2 run.
 >
 > **Cross-cutting acceptance (every batch in this epic):** each new exchange — both an **upstream
 > Chronodrive** client call and an **inbound local-API** request served — emits a `LogEvent` that is
@@ -51,40 +51,7 @@
 
 ---
 
-## BATCH-8 — Products & nutrition via the local API (P1, Macronome cluster) — top batch, next to develop
-
-### [BL-010] Expose search + product sheet (with nutrition, weight, price, image)
-
-- Type: Evolution
-- Priority: P1
-- Status: Batched
-- Source: user remark (2026-06-28)
-- Spec impact: api/local/contract.md; reuses contract.md §5.1/§5.12/§5.12.1/§5.13/§5.14
-- Affected files / areas: `packages/backend/src/chronodrive/` (client: add product detail/search/batch
-  calls + nutrition-code mapper + image-URL builder), `packages/backend/src/http/` (local routes),
-  `packages/shared/src/api/` (product/nutrition DTOs)
-- Description: serves UC2/3/4/8 and the macronome "create a food with nutrition auto" path. Both EAN
-  paths (keyword search and direct EAN) resolve via upstream `GET /v1/products?searchTerm=`.
-- Change to make:
-  - Chronodrive client methods for `GET /v1/products/{id}`, `GET /v1/products?searchTerm=`,
-    `GET /v1/products?ids=` (Products `x-api-key`).
-  - A **nutrition mapper** translating `characteristics.features[]` codes (§5.12.1 essential set) into
-    a normalized nutrition object (energy kJ/kcal, fat, saturates, carbs, sugars, fibre, protein, salt,
-    Nutri-Score, allergens text, origin), per 100 g (code 563).
-  - An **image-URL builder** prefixing `https://static1.chronodrive.com/`.
-  - Local endpoints: `GET /api/v1/search?q=` and `GET /api/v1/products/{eanOrId}` returning a
-    normalized product DTO (identity, **weight/unitQuantity**, price incl. lastPeriodLowestPrice, stock/
-    eligibility, nutrition, ingredients, allergens, image URLs).
-- Acceptance criteria: a known EAN returns a normalized product with mapped nutrition + weight + image
-  URL; a keyword returns a product page; an unknown EAN returns a clean not-found; the exchange is
-  logged as API Chronodrive (upstream) and the inbound call as API interne; tests cover the mapper with
-  the two captured samples.
-- Batch: BATCH-8
-- Dependencies: BL-008, BL-009
-
----
-
-## BATCH-9 — Cart & lists via the local API (P1)
+## BATCH-9 — Cart & lists via the local API (P1) — top batch, next to develop
 
 ### [BL-011] Expose cart read/write, lists CRUD, recipe-fill, and a budget/nutrition aggregate
 

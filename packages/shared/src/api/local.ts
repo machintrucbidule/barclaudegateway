@@ -38,3 +38,99 @@ export interface LocalApiStatus {
   /** Local-API major version (the `/v1` in the prefix). */
   version: number;
 }
+
+// ---------------------------------------------------------------------------------------------
+// BATCH-8 (BL-010) — products & nutrition (the macronome cluster)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Normalized nutrition for a product (the essential set, upstream contract.md §5.12.1). Values are
+ * per the `base` (observed `"100 g"`); a field is **absent** when the manufacturer did not declare it.
+ */
+export interface ProductNutrition {
+  /** Reference base for the values, e.g. `"100 g"` (code 563). */
+  base?: string;
+  energyKj?: number;
+  energyKcal?: number;
+  /** Fat (lipides), g. */
+  fat?: number;
+  /** Of which saturates, g. */
+  saturates?: number;
+  /** Carbohydrate (glucides), g. */
+  carbohydrate?: number;
+  /** Of which sugars, g. */
+  sugars?: number;
+  fibre?: number;
+  /** Protein (protéines), g. */
+  protein?: number;
+  /** Salt (sel), g. */
+  salt?: number;
+  /** Nutri-Score grade `A`–`E` (code 520). */
+  nutriScore?: string;
+  /** Allergen statement, free text (code 383). */
+  allergens?: string;
+  /** Origin, free text (code 759). */
+  origin?: string;
+}
+
+/** Absolute product image URLs (relative §5.12 paths prefixed with the static media host). */
+export interface ProductImageUrls {
+  thumbnails: string[];
+  views: string[];
+  zooms: string[];
+}
+
+/** Normalized price block (€), from upstream §5.12 `prices`. */
+export interface ProductPrice {
+  default?: number;
+  /** €/kg or €/L. */
+  perUnitMeasure?: number;
+  /** EU "lowest price in the last 30 days". */
+  lastPeriodLowest?: number;
+  vatRate?: number;
+}
+
+/** Shared identity/availability fields between the lean summary and the full sheet. */
+interface ProductBase {
+  id: string;
+  eans: string[];
+  /** Product label, e.g. "Mozzarella di bufala campana AOP". */
+  name?: string;
+  brand?: string;
+  /** Human net quantity, e.g. "125 g". */
+  unitQuantityLabel?: string;
+  /** Net weight in kg (from §5.12 `packaging.weight`). */
+  weightKg?: number;
+  price: ProductPrice;
+  stock?: string;
+  remainingStock?: number;
+  isEligible?: boolean;
+}
+
+/** `GET /api/v1/products/{eanOrId}` — the full normalized product sheet (with nutrition + ingredients). */
+export interface NormalizedProduct extends ProductBase {
+  nutrition: ProductNutrition;
+  ingredients?: string;
+  images: ProductImageUrls;
+}
+
+/** A lean search-result item (no nutrition/ingredients — fetch the sheet for those). */
+export interface ProductSummary extends ProductBase {
+  /** One representative image URL (first `views`, else first `thumbnails`), when available. */
+  image?: string;
+}
+
+/** Pagination echoed from upstream §5.13. */
+export interface ProductSearchPage {
+  number: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+  hasNext: boolean;
+}
+
+/** `GET /api/v1/search?q=` — a page of product summaries. */
+export interface ProductSearchResponse {
+  products: ProductSummary[];
+  page: ProductSearchPage;
+}

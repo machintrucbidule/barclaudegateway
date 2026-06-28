@@ -6,7 +6,56 @@
 >
 > Newest entries on top. Nothing here is active work — the active backlog is [`BACKLOG.md`](./BACKLOG.md).
 >
-> Last updated: 2026-06-28 (BATCH-7 — BL-008 local API foundation + BL-009 logging taxonomy, DECISION-023, app v0.3.0)
+> Last updated: 2026-06-28 (BATCH-8 — BL-010 products & nutrition on the local API, DECISION-024, app v0.4.0)
+
+---
+
+## BATCH-8 — Products & nutrition via the local API (P1, Macronome cluster) — shipped 2026-06-28
+
+> Developed via loop prompt 2 on branch `feature/batch-7-local-api-foundation` (app **v0.4.0**). First
+> data endpoints on the local "Layer B" API: search + the full product sheet with mapped nutrition,
+> weight, price and absolute image URLs, backed by the upstream Chronodrive **Products** service.
+> Recorded as **DECISION-024**. Upstream `contract.md` unchanged (already documents these at 1.5.0);
+> `api/local/contract.md` → v0.2.0.
+
+### [BL-010] Expose search + product sheet (with nutrition, weight, price, image)
+
+- Type: Evolution · Priority: P1 · Batch: BATCH-8 · Source: user remark (2026-06-28)
+- **Date shipped**: 2026-06-28
+- **What was actually done**:
+  - **Products `x-api-key`** added as a fifth per-service key (`apiKeys.products`, `x_api_key_products`,
+    seed `34bfe4e1…`) across `config/defaults.ts` (incl. `appConfigFromMap` defaulting it, never
+    `need()`), the shared `ApiConfig`, `parseConfigBody`/`toApiConfig`, the `XApiKeyService` union +
+    `apiKeyFor`, and a config-page input (rotation recovery, contract.md §3.1). The ~6 test `apiKeys`
+    literals were updated.
+  - **Chronodrive client methods** (`chronodrive/client.ts`): `getProduct(id)` (§5.12),
+    `searchProducts(term,page,size)` (§5.13), `getProductByEan(ean)` (one-call EAN→product), and
+    `getProductsByIds(ids)` (§5.14, builds the repeated `?ids=` query manually since the HTTP client's
+    `query` is single-valued) — all on the Products key + site headers. Upstream `Product` was extended
+    **additively** (prices/packaging/images/characteristics) + `ProductsSearchResponse` added.
+  - **Mappers** (`chronodrive/productMapper.ts`, pure): `mapNutrition` (essential §5.12.1 codes →
+    `ProductNutrition`, undeclared fields omitted), `STATIC_MEDIA_BASE` + `toAbsoluteImages`,
+    `toNormalizedProduct`, `toProductSummary`. New shared DTOs `ProductNutrition`/`NormalizedProduct`/
+    `ProductSummary`/`ProductSearchResponse` in `api/local.ts`.
+  - **Local endpoints** (`http/localApiRoutes.ts`, behind the BATCH-7 `X-API-Key` guard):
+    `GET /api/v1/search?q=` → a page of `ProductSummary` (400 on empty `q`); `GET /api/v1/products/{eanOrId}`
+    → a `NormalizedProduct`, disambiguating EAN (via `validateEan` → §5.13 search) vs product id (§5.12).
+    Each upstream call is journalled as a `chronodrive` event (`product_search`/`product_lookup`); the
+    inbound request is the existing `api_local` line. Not found → 404 `not_found`; upstream failure → 502
+    `upstream_error`. `LocalApiDeps` gained `chronodrive`; wired in `ingest/server.ts`.
+- **Acceptance criteria — met**: a known EAN returns a normalized product with mapped nutrition + weight +
+  absolute image URL; a keyword returns a page of summaries; an unknown EAN → clean 404; the exchange is
+  logged as **API Chronodrive** (upstream) and the inbound call as **API interne**; the mapper is tested
+  against the two captured samples (`91574`, `572811`). Lazy/keep-alive preserved (on-demand login only).
+- **Tests** (all green: **216** total — 196 backend + 20 frontend; ~24 new backend): `productMapper.test.ts`
+  (two samples, fibre-absent case, image URLs, summary vs sheet); `chronodrive/client.test.ts` (the four
+  product methods + Products-key/site-header assertions + empty-input short-circuit); `apiRoutes.test.ts`
+  (search 200/400, product by EAN 200 with nutrition, by id 200, unknown → 404, 401 without key,
+  `chronodrive` events filterable). Lint/typecheck/format/build green.
+- **Docs/specs**: `api/local/contract.md` → v0.2.0 (§5.1/§5.2 `IMPLEMENTED` with shapes); `decisions.md`
+  (DECISION-024); `PROJECT_CONTEXT.md` (endpoints, Products key, decision-table row). Root `package.json`
+  **0.3.0 → 0.4.0**. Upstream `contract.md` unchanged.
+- **Commit/PR**: branch `feature/batch-7-local-api-foundation` (loop prompt 2, 2026-06-28).
 
 ---
 

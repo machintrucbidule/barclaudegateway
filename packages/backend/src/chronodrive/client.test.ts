@@ -16,6 +16,7 @@ const CONFIG: AppConfig = {
   apiBaseUrl: 'https://api.test.local/v1',
   apiKeys: {
     search: 'SEARCH_KEY',
+    products: 'PRODUCTS_KEY',
     customerCartRead: 'CCR_KEY',
     cartWrite: 'CW_KEY',
     shoppingLists: 'SL_KEY',
@@ -230,5 +231,87 @@ describe('ChronodriveClient (mocked)', () => {
     await expect(client.resolveEan('1')).rejects.toBeInstanceOf(AuthError);
     await expect(client.resolveEan('2')).rejects.toBeInstanceOf(ApiKeyError);
     await expect(client.getShoppingList('MISSING')).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  // ---- §5.12–5.14 products (BL-010) ----------------------------------------------------------
+
+  it('getProduct sends the Products key + site headers and returns the full sheet', async () => {
+    let headers: Record<string, string> = {};
+    pool.intercept({ path: '/v1/products/91574', method: 'GET' }).reply(200, (opts) => {
+      headers = opts.headers as Record<string, string>;
+      return { id: '91574', labels: { productLabel: 'Mozza' }, eans: ['3596710335510'] };
+    });
+
+    const client = makeClient('1016');
+    const product = await client.getProduct('91574');
+
+    expect(product.id).toBe('91574');
+    expect(headers['x-api-key']).toBe('PRODUCTS_KEY');
+    expect(headers['x-chronodrive-site-id']).toBe('1016');
+    expect(headers['x-chronodrive-site-mode']).toBe('DRIVE');
+  });
+
+  it('searchProducts passes searchTerm/page/size and returns the paginated content', async () => {
+    let query = '';
+    pool.intercept({ path: pathIs('/v1/products'), method: 'GET' }).reply(200, (opts) => {
+      query = new URL(`http://x${opts.path}`).search;
+      return {
+        page: {
+          size: 20,
+          totalElements: 1,
+          totalPages: 1,
+          number: 1,
+          hasNext: false,
+          isEmpty: false,
+        },
+        content: [{ id: '572811', labels: {}, eans: [] }],
+      };
+    });
+
+    const client = makeClient('1016');
+    const res = await client.searchProducts('mozzarella');
+    expect(res.content[0]?.id).toBe('572811');
+    expect(query).toContain('searchTerm=mozzarella');
+    expect(query).toContain('page=1');
+    expect(query).toContain('size=20');
+  });
+
+  it('getProductByEan returns content[0] or null', async () => {
+    pool.intercept({ path: pathIs('/v1/products'), method: 'GET' }).reply(200, {
+      page: { size: 1, totalElements: 1, totalPages: 1, number: 1, hasNext: false, isEmpty: false },
+      content: [{ id: '91574', labels: {}, eans: ['3596710335510'] }],
+    });
+    pool.intercept({ path: pathIs('/v1/products'), method: 'GET' }).reply(200, {
+      page: { size: 1, totalElements: 0, totalPages: 0, number: 1, hasNext: false, isEmpty: true },
+      content: [],
+    });
+
+    const client = makeClient('1016');
+    expect((await client.getProductByEan('3596710335510'))?.id).toBe('91574');
+    expect(await client.getProductByEan('0000000000000')).toBeNull();
+  });
+
+  it('getProductsByIds builds repeated ?ids params and returns the product list', async () => {
+    let query = '';
+    pool.intercept({ path: pathIs('/v1/products'), method: 'GET' }).reply(200, (opts) => {
+      query = new URL(`http://x${opts.path}`).search;
+      return {
+        content: [
+          { id: '122649', labels: {}, eans: [] },
+          { id: '522947', labels: {}, eans: [] },
+        ],
+      };
+    });
+
+    const client = makeClient('1016');
+    const products = await client.getProductsByIds(['122649', '522947']);
+    expect(products.map((p) => p.id)).toEqual(['122649', '522947']);
+    expect(query).toContain('ids=122649');
+    expect(query).toContain('ids=522947');
+  });
+
+  it('getProductsByIds short-circuits to [] for an empty input (no network call)', async () => {
+    const client = makeClient('1016');
+    expect(await client.getProductsByIds([])).toEqual([]);
   });
 });

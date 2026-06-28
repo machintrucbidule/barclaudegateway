@@ -114,7 +114,7 @@ export function buildServer(deps: ServerDeps, options: ServerOptions = {}): Fast
   // inside this plugin, so `POST /v1/scan` and the UI `/api/*` routes are unaffected.
   void app.register(localApiRoutes, {
     prefix: '/api/v1',
-    deps: { configStore: deps.configStore, emit: deps.emit },
+    deps: { configStore: deps.configStore, emit: deps.emit, chronodrive: deps.chronodrive },
   });
 
   app.post('/v1/scan', async (request, reply) => {

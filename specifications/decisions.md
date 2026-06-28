@@ -2,7 +2,7 @@
 
 > Decisions are added here as they are resolved. Each entry records: the question, the options considered, the choice made, and who decided.
 > All Phase 0 functional clarifications (CLARIFY-_) and architecture decisions (DECISION-_) are now resolved.
-> Last updated: 2026-06-28 (DECISION-023 — BATCH-7 local API foundation: `/api/v1` prefix, app-managed `X-API-Key`, Chronodrive/interne log split, BL-008/BL-009; app v0.3.0)
+> Last updated: 2026-06-28 (DECISION-024 — BATCH-8 products & nutrition on the local API: Products `x-api-key`, normalized DTOs, §5.12.1 nutrition mapper, BL-010; app v0.4.0)
 
 ---
 
@@ -722,6 +722,43 @@
   (the skeleton makes no Chronodrive call; BATCH-8+ handlers reuse `auth.getAccessToken()`).
 - **Shipped in**: BATCH-7 (loop prompt 2, 2026-06-28) on `feature/batch-7-local-api-foundation`, app
   version **0.3.0**. Full entries in `BACKLOG_ARCHIVE.md`.
+
+---
+
+### [DECISION-024] Products & nutrition on the local API (BATCH-8 / BL-010)
+
+- **Date**: 2026-06-28
+- **Question**: the first Layer-B data endpoints — how to expose Chronodrive **search** and the
+  **product sheet** (with nutrition/weight/price/image, the macronome cluster) on `/api/v1`, mapping the
+  upstream Products surface (contract.md §5.12/§5.12.1/§5.13/§5.14, CONFIRMED 1.5.0) into a clean local
+  contract.
+- **Decisions** (build choices under the DECISION-022 scope; presented + approved):
+  - **Products `x-api-key` added to config** as a fifth per-service key (`apiKeys.products`,
+    `x_api_key_products`, seed `34bfe4e1…`), editable in the config page like the others (not secret); a
+    DB seeded before 1.5.0 falls back to the known-good seed in `appConfigFromMap` (never `need()`) and
+    gains the row on the next `seedDefaults`.
+  - **Normalized DTOs, two shapes**: a lean **`ProductSummary`** for `GET /api/v1/search?q=` (identity,
+    `weightKg`, price, stock/eligibility, one image) and a full **`NormalizedProduct`** for
+    `GET /api/v1/products/{eanOrId}` (adds `nutrition`, `ingredients`, all image kinds). Search stays
+    light; the per-product call carries the heavy fields. Upstream `Product` was extended **additively**
+    (all new fields optional) so the scan path is untouched.
+  - **Nutrition mapper = essential §5.12.1 set only** (per DECISION-022): energy kJ/kcal, fat, saturates,
+    carbohydrate, sugars, fibre, protein, salt, Nutri-Score, allergens text, origin — a field is omitted
+    when the manufacturer did not declare it. The ~50 boolean/label codes stay unmapped.
+  - **EAN-vs-id disambiguation** on the single `/products/{eanOrId}` route: a valid GS1 barcode
+    (`validateEan`, reused from the scan pipeline) resolves by EAN via upstream `?searchTerm=` (§5.13);
+    anything else is treated as a product id via `/v1/products/{id}` (§5.12). Not found → `404`.
+  - **Logging**: each upstream call is journalled as a `chronodrive` ("API Chronodrive") event
+    (`product_search`/`product_lookup`); the inbound request is the BATCH-7 `api_local` line — closing
+    the BL-009 loop with a real upstream category. Errors map to `404 not_found` / `502 upstream_error`.
+    Lazy/keep-alive (DECISION-021) is preserved (the client triggers on-demand login; no background call).
+- **Decided by**: User (Ivan) — approved the plan (DTO split, mapper depth, disambiguation, key handling).
+- **Rationale**: a normalized contract shields macronome from the raw Chronodrive shape (coded nutrition,
+  relative images, `packaging.weight`); the summary/sheet split keeps search responses lean; mapping only
+  the codes macronome needs avoids guessing ~50 undocumented ones; reusing `validateEan` gives one route
+  for both lookup styles. Upstream `contract.md` UNCHANGED (it already documents these at 1.5.0).
+- **Shipped in**: BATCH-8 (loop prompt 2, 2026-06-28) on `feature/batch-7-local-api-foundation`, app
+  version **0.4.0**; `api/local/contract.md` → v0.2.0. Full entry in `BACKLOG_ARCHIVE.md`.
 
 ---
 

@@ -20,6 +20,7 @@ export interface ApiConfig {
   apiBaseUrl: string;
   apiKeys: {
     search: string;
+    products: string;
     customerCartRead: string;
     cartWrite: string;
     shoppingLists: string;

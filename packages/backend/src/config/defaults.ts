@@ -9,6 +9,8 @@
 
 export interface ApiKeys {
   search: string;
+  /** Products service (contract.md §3.1, added 1.5.0): `/v1/products/{id}`, `?searchTerm=`, `?ids=`. */
+  products: string;
   customerCartRead: string;
   cartWrite: string;
   shoppingLists: string;
@@ -70,6 +72,7 @@ export const CONFIG_KEYS = {
   identityBaseUrl: 'identity_base_url',
   apiBaseUrl: 'api_base_url',
   apiKeySearch: 'x_api_key_search',
+  apiKeyProducts: 'x_api_key_products',
   apiKeyCustomerCartRead: 'x_api_key_customer_cart_read',
   apiKeyCartWrite: 'x_api_key_cart_write',
   apiKeyShoppingLists: 'x_api_key_shopping_lists',
@@ -89,6 +92,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   apiBaseUrl: 'https://api.chronodrive.com/v1',
   apiKeys: {
     search: '49a29e90-6842-4b90-8d09-07222f40b3ed',
+    products: '34bfe4e1-82d1-458a-9a51-61198fff84b3',
     customerCartRead: 'c5e1b8ce-3a98-4871-842d-b7a60922ba97',
     cartWrite: '3f796a97-e16a-4f3f-bd29-9523c7f28edb',
     shoppingLists: '92f00545-3e4b-4d33-94d1-f535e934cece',
@@ -112,6 +116,7 @@ export function appConfigToEntries(config: AppConfig): Array<[string, string]> {
     [CONFIG_KEYS.identityBaseUrl, config.identityBaseUrl],
     [CONFIG_KEYS.apiBaseUrl, config.apiBaseUrl],
     [CONFIG_KEYS.apiKeySearch, config.apiKeys.search],
+    [CONFIG_KEYS.apiKeyProducts, config.apiKeys.products],
     [CONFIG_KEYS.apiKeyCustomerCartRead, config.apiKeys.customerCartRead],
     [CONFIG_KEYS.apiKeyCartWrite, config.apiKeys.cartWrite],
     [CONFIG_KEYS.apiKeyShoppingLists, config.apiKeys.shoppingLists],
@@ -145,6 +150,10 @@ export function appConfigFromMap(map: ReadonlyMap<string, string>): AppConfig {
     apiBaseUrl: need(CONFIG_KEYS.apiBaseUrl),
     apiKeys: {
       search: need(CONFIG_KEYS.apiKeySearch),
+      // Optional: absent on databases seeded before 1.5.0 → fall back to the known-good seed (the row is
+      // added by seedDefaults' INSERT OR IGNORE on the next boot). Never `need()` it, or an upgraded DB
+      // would fail to load.
+      products: map.get(CONFIG_KEYS.apiKeyProducts) ?? DEFAULT_APP_CONFIG.apiKeys.products,
       customerCartRead: need(CONFIG_KEYS.apiKeyCustomerCartRead),
       cartWrite: need(CONFIG_KEYS.apiKeyCartWrite),
       shoppingLists: need(CONFIG_KEYS.apiKeyShoppingLists),

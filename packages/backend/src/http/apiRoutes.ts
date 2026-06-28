@@ -142,6 +142,7 @@ function parseConfigBody(
   if (!isHttpUrl(b.apiBaseUrl)) return { ok: false, error: 'apiBaseUrl must be an http(s) URL' };
   if (typeof keys !== 'object' || keys === null) return { ok: false, error: 'apiKeys is required' };
   if (!isNonEmptyString(keys.search)) return { ok: false, error: 'apiKeys.search is required' };
+  if (!isNonEmptyString(keys.products)) return { ok: false, error: 'apiKeys.products is required' };
   if (!isNonEmptyString(keys.customerCartRead))
     return { ok: false, error: 'apiKeys.customerCartRead is required' };
   if (!isNonEmptyString(keys.cartWrite))
@@ -170,6 +171,7 @@ function parseConfigBody(
       apiBaseUrl: b.apiBaseUrl,
       apiKeys: {
         search: keys.search,
+        products: keys.products,
         customerCartRead: keys.customerCartRead,
         cartWrite: keys.cartWrite,
         shoppingLists: keys.shoppingLists,

@@ -52,18 +52,74 @@ export interface ProductLabels {
   ticketLabel?: string;
 }
 
-/** A product as returned by search-suggestions (§5.1) and list contents (§5.10). */
+/** One coded characteristic (§5.12.1). `value` is a string for nutrients, a boolean for label flags. */
+export interface ProductFeature {
+  code: string;
+  value: string | boolean;
+}
+
+/** §5.12 product prices (extended in 1.5.0). All optional — the scan path only reads `defaultPrice`. */
+export interface ProductPrices {
+  defaultPrice?: number;
+  /** €/kg or €/L. */
+  pricePerUnitMeasure?: number;
+  /** EU "lowest price in the last 30 days" — useful for price-drop detection. */
+  lastPeriodLowestPrice?: number;
+  vatRate?: number;
+  depositPrice?: number;
+}
+
+/** §5.12 packaging block. `weight`/`unitMeasure` are in `unit` (kg or L). */
+export interface ProductPackaging {
+  unit?: string;
+  unitMeasure?: number;
+  /** Net weight in `unit` (e.g. 0.125 kg). */
+  weight?: number;
+}
+
+/** §5.12 relative image paths (prefix with `https://static1.chronodrive.com/`). */
+export interface ProductImages {
+  thumbnails?: string[];
+  views?: string[];
+  zooms?: string[];
+}
+
+/** §5.12 composition. `features[]` carries coded nutrition (§5.12.1); `allergens` is often `[]`. */
+export interface ProductCharacteristics {
+  origin?: string;
+  ingredients?: string;
+  allergens?: string[];
+  features?: ProductFeature[];
+}
+
+/**
+ * A product as returned by search-suggestions (§5.1) and list contents (§5.10), and — with the
+ * extended fields below populated — by the Products service (§5.12/§5.13/§5.14, 1.5.0). All extended
+ * fields are optional, so the lightweight `/search-suggestions` and scan-path usages are unaffected.
+ */
 export interface Product {
   id: string;
   labels: ProductLabels;
   eans: string[];
-  prices?: { defaultPrice?: number };
+  prices?: ProductPrices;
   remainingStock?: number;
   stock?: Stock;
   /** `false` = the product exists but is unavailable at the configured `site_id`. */
   isEligible?: boolean;
   maxCartQuantity?: number;
   flags?: Record<string, boolean>;
+  /** §5.12: net weight / packaging. */
+  packaging?: ProductPackaging;
+  /** §5.12: relative image paths. */
+  images?: ProductImages;
+  /** §5.12: ingredients, allergens, origin, and the coded nutrition `features[]` (§5.12.1). */
+  characteristics?: ProductCharacteristics;
+}
+
+/** §5.13/§5.14 — `GET /v1/products?searchTerm=` (paginated) / `?ids=` (batch). `content[]` are full products. */
+export interface ProductsSearchResponse {
+  page: Page;
+  content: Product[];
 }
 
 /** §5.1 — `GET /v1/search-suggestions?searchTerm={ean}`. Empty `products` = EAN not in catalogue. */
@@ -167,7 +223,12 @@ export interface ShoppingListContentsResponse {
  * Logical service buckets, each with its own static `x-api-key` (contract.md §3.1). If Chronodrive
  * rotates a key, only the matching service's calls break — the bucket pins the blast radius.
  */
-export type XApiKeyService = 'SEARCH' | 'CUSTOMER_CART_READ' | 'CART_WRITE' | 'SHOPPING_LISTS';
+export type XApiKeyService =
+  | 'SEARCH'
+  | 'PRODUCTS'
+  | 'CUSTOMER_CART_READ'
+  | 'CART_WRITE'
+  | 'SHOPPING_LISTS';
 
 // ---------------------------------------------------------------------------------------------
 // Error classification (consumed by the backend error model and the Phase 5 detection UI)

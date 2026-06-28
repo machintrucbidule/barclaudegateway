@@ -262,6 +262,7 @@ const API_FIELDS: Array<{ key: keyof Omit<ApiConfig, 'apiKeys'>; label: string }
 
 const KEY_FIELDS: Array<{ key: keyof ApiConfig['apiKeys']; label: string }> = [
   { key: 'search', label: 'x-api-key (search)' },
+  { key: 'products', label: 'x-api-key (products)' },
   { key: 'customerCartRead', label: 'x-api-key (cart read)' },
   { key: 'cartWrite', label: 'x-api-key (cart write)' },
   { key: 'shoppingLists', label: 'x-api-key (shopping lists)' },

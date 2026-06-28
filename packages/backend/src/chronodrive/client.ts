@@ -15,6 +15,7 @@ import type {
   CartItemMutationResult,
   CustomerResponse,
   Product,
+  ProductsSearchResponse,
   SearchSuggestionsResponse,
   ShoppingList,
   ShoppingListContentsResponse,
@@ -52,6 +53,8 @@ function apiKeyFor(config: AppConfig, service: XApiKeyService): string {
   switch (service) {
     case 'SEARCH':
       return config.apiKeys.search;
+    case 'PRODUCTS':
+      return config.apiKeys.products;
     case 'CUSTOMER_CART_READ':
       return config.apiKeys.customerCartRead;
     case 'CART_WRITE':
@@ -181,6 +184,62 @@ export class ChronodriveClient {
     );
     this.check(res, endpoint);
     return res.data.products?.[0] ?? null;
+  }
+
+  // ---- §5.12–5.14 products (full sheet / search / batch) --------------------------------------
+
+  /** §5.12 — Full product sheet by Chronodrive product id (nutrition, weight, prices, images). */
+  async getProduct(id: string): Promise<Product> {
+    const endpoint = 'GET /products/{id}';
+    const res = this.record(
+      endpoint,
+      await this.http.requestJson<Product>(this.url(`/products/${encodeURIComponent(id)}`), {
+        endpoint,
+        headers: await this.buildHeaders('PRODUCTS', true),
+      }),
+    );
+    return this.check(res, endpoint).data;
+  }
+
+  /** §5.13 — Rich paginated catalogue search; `content[]` are full product objects. */
+  async searchProducts(searchTerm: string, page = 1, size = 20): Promise<ProductsSearchResponse> {
+    const endpoint = 'GET /products?searchTerm';
+    const res = this.record(
+      endpoint,
+      await this.http.requestJson<ProductsSearchResponse>(this.url('/products'), {
+        endpoint,
+        query: { searchTerm, page, size },
+        headers: await this.buildHeaders('PRODUCTS', true),
+      }),
+    );
+    return this.check(res, endpoint).data;
+  }
+
+  /** §5.13 — Resolve an EAN to its full product in one call, or `null` if not in the catalogue. */
+  async getProductByEan(ean: string): Promise<Product | null> {
+    const res = await this.searchProducts(ean, 1, 1);
+    return res.content?.[0] ?? null;
+  }
+
+  /**
+   * §5.14 — Batch fetch full products by id (repeated `?ids=` params). The shared HTTP client's `query`
+   * is single-valued, so the repeated-id query string is built here. Returns `[]` for an empty input.
+   */
+  async getProductsByIds(ids: string[]): Promise<Product[]> {
+    if (ids.length === 0) return [];
+    const endpoint = 'GET /products?ids';
+    const qs = ids.map((id) => `ids=${encodeURIComponent(id)}`).join('&');
+    const res = this.record(
+      endpoint,
+      await this.http.requestJson<ProductsSearchResponse | Product[]>(this.url(`/products?${qs}`), {
+        endpoint,
+        headers: await this.buildHeaders('PRODUCTS', true),
+      }),
+    );
+    this.check(res, endpoint);
+    // §5.14 returns a list of products; tolerate either a bare array or a `{ content }` envelope.
+    const data = res.data;
+    return Array.isArray(data) ? data : (data.content ?? []);
   }
 
   // ---- §5.3–5.6 cart --------------------------------------------------------------------------
