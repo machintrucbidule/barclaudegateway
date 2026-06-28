@@ -2,11 +2,14 @@ import type { JSX } from 'react';
 import { Badge } from '@mantine/core';
 import type { LogCategory, LogLevel } from '@barclaudegateway/shared';
 
-/** French label + Mantine colour for each operational-log category (BL-003). */
+/** French label + Mantine colour for each operational-log category (BL-003, BL-009). */
 const CATEGORY: Record<LogCategory, { color: string; label: string }> = {
   auth: { color: 'indigo', label: 'Authentification' },
   scan: { color: 'cyan', label: "Scan d'objet" },
   other: { color: 'gray', label: 'Autre' },
+  // BL-009: upstream Chronodrive calls vs inbound local-API requests.
+  chronodrive: { color: 'orange', label: 'API Chronodrive' },
+  api_local: { color: 'teal', label: 'API interne' },
 };
 
 /** French label + colour for each log level. `error` is red so a failing step stands out. */

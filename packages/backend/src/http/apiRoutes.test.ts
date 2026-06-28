@@ -427,6 +427,60 @@ describe('api routes (fastify.inject)', () => {
     expect(auth.events[0].type).toBe('login_complete');
   });
 
+  it('mounts the local API (BL-008): /api/v1/ping is key-guarded, /api/* + /v1/scan are not', async () => {
+    // No key set in the harness → the local API is locked.
+    expect((await h.app.inject({ method: 'GET', url: '/api/v1/ping' })).statusCode).toBe(401);
+
+    // The internal UI API and the ESP scan endpoint require no key (unchanged).
+    expect((await h.app.inject({ method: 'GET', url: '/api/config' })).statusCode).toBe(200);
+    expect((await h.app.inject({ method: 'GET', url: '/api/health' })).statusCode).toBe(200);
+
+    // With the managed key set, the right header reaches the stub.
+    h.configStore.set(CONFIG_KEYS.localApiKey, 'INTEG-KEY');
+    const ok = await h.app.inject({
+      method: 'GET',
+      url: '/api/v1/ping',
+      headers: { 'x-api-key': 'INTEG-KEY' },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toEqual({ status: 'ok', version: 1 });
+
+    // The served call is journalled as an api_local event, filterable on /logs (BL-009).
+    const apiLocal = (
+      await h.app.inject({ method: 'GET', url: '/api/events?category=api_local' })
+    ).json();
+    expect(apiLocal.total).toBeGreaterThanOrEqual(1);
+    expect(apiLocal.events[0].type).toBe('local_api_request');
+  });
+
+  it('GET /api/config never exposes the managed local_api_key, and PUT does not clobber it', async () => {
+    h.configStore.set(CONFIG_KEYS.localApiKey, 'MANAGED-KEY');
+
+    const before = (await h.app.inject({ method: 'GET', url: '/api/config' })).json();
+    expect(before.localApiKey).toBeUndefined();
+
+    // A normal config write must leave the app-managed key intact.
+    await h.app.inject({ method: 'PUT', url: '/api/config', payload: CONFIG });
+    expect(h.configStore.readAppConfig().localApiKey).toBe('MANAGED-KEY');
+
+    const after = (await h.app.inject({ method: 'GET', url: '/api/config' })).json();
+    expect(after.localApiKey).toBeUndefined();
+  });
+
+  it('GET /api/events accepts the new chronodrive category filter (BL-009)', async () => {
+    h.eventLog.append({
+      category: 'chronodrive',
+      type: 'product_lookup',
+      level: 'info',
+      message: 'upstream',
+    });
+    const res = (
+      await h.app.inject({ method: 'GET', url: '/api/events?category=chronodrive' })
+    ).json();
+    expect(res.total).toBe(1);
+    expect(res.events[0].category).toBe('chronodrive');
+  });
+
   it('PUT /api/config journals a config_change event (BL-003)', async () => {
     await h.app.inject({ method: 'PUT', url: '/api/config', payload: CONFIG });
     const events = h.eventLog.query({ page: 1, pageSize: 50 });

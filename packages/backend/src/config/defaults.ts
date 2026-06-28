@@ -46,6 +46,20 @@ export interface AppConfig {
    * resolves to `keepalive` so existing deployments keep today's behaviour until switched in the UI.
    */
   authMode: 'lazy' | 'keepalive';
+  /**
+   * Shared key guarding the local "Layer B" API (`/api/v1/*`, BL-008/DECISION-023). Empty by default;
+   * the backend **auto-generates** one on first boot when empty (see `bootstrap.ts`) and surfaces it
+   * once in the operational logs so it can be copied into a client's `X-API-Key` header.
+   *
+   * It is **app-managed, not user-editable**: deliberately absent from {@link appConfigToEntries} (so
+   * neither `ConfigStore.seedDefaults` nor the user-facing `PUT /api/config` writer can touch it) and
+   * absent from the shared `ApiConfig` (so `GET/PUT /api/config` never expose or accept it). It is
+   * written only via `ConfigStore.set` by the boot-time generation step, and read here by the guard.
+   *
+   * Optional in the type because it is not part of the core required config and is set out-of-band;
+   * {@link appConfigFromMap} always normalises it to a string (`''` until generated).
+   */
+  localApiKey?: string;
 }
 
 /** Config-table column keys (one row per key). Kept as constants to avoid typos. */
@@ -63,6 +77,7 @@ export const CONFIG_KEYS = {
   siteId: 'site_id',
   haWebhookUrl: 'ha_webhook_url',
   authMode: 'auth_mode',
+  localApiKey: 'local_api_key',
 } as const;
 
 /** Known-good seed values, verified 2026-06-26 (contract.md §2.1, §3.1, §4). */
@@ -83,6 +98,9 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   haWebhookUrl: '',
   // Fresh installs default to the on-demand (lazy) policy — minimal background calls (BL-006).
   authMode: 'lazy',
+  // Empty seed: the backend auto-generates a key on first boot when this is empty (BL-008). Never
+  // seeded/written via appConfigToEntries — see the field doc on AppConfig.
+  localApiKey: '',
 };
 
 /** Flatten an {@link AppConfig} into config-table `[key, value]` rows. */
@@ -101,6 +119,9 @@ export function appConfigToEntries(config: AppConfig): Array<[string, string]> {
     [CONFIG_KEYS.siteId, config.siteId],
     [CONFIG_KEYS.haWebhookUrl, config.haWebhookUrl],
     [CONFIG_KEYS.authMode, config.authMode],
+    // NOTE: `localApiKey` is intentionally NOT listed. It is app-managed (auto-generated at boot) and
+    // must never be written by the default seed or the user-facing `PUT /api/config` path — both go
+    // through this function. It is persisted only via `ConfigStore.set` and read in appConfigFromMap.
   ];
 }
 
@@ -137,5 +158,8 @@ export function appConfigFromMap(map: ReadonlyMap<string, string>): AppConfig {
     // install seeds `lazy` explicitly (see ConfigStore.seedDefaults), so "missing" only ever means an
     // upgraded DB, never a new one.
     authMode: toAuthMode(map.get(CONFIG_KEYS.authMode)),
+    // Optional: empty until the boot-time generator writes it (BL-008). Never seeded via this map's
+    // writer (appConfigToEntries) — only set directly by ConfigStore.set in bootstrap.
+    localApiKey: map.get(CONFIG_KEYS.localApiKey) ?? '',
   };
 }

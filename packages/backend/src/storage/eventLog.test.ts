@@ -58,6 +58,20 @@ describe('EventLog', () => {
     expect(log.query({ category: 'auth', page: 1, pageSize: 10 })).toHaveLength(1);
   });
 
+  it('filters by the BL-009 chronodrive / api_local categories', () => {
+    const log = new EventLog(db);
+    log.append({ category: 'chronodrive', type: 'product_lookup', level: 'info', message: 'up' });
+    log.append({ category: 'api_local', type: 'local_api_request', level: 'info', message: 'in' });
+    log.append({ category: 'scan', type: 'scan_complete', level: 'info', message: 's' });
+
+    expect(log.count({ category: 'chronodrive' })).toBe(1);
+    expect(log.count({ category: 'api_local' })).toBe(1);
+    expect(log.query({ category: 'chronodrive', page: 1, pageSize: 10 })[0]?.message).toBe('up');
+    expect(log.query({ category: 'api_local', page: 1, pageSize: 10 })[0]?.type).toBe(
+      'local_api_request',
+    );
+  });
+
   it('prunes by row cap (50 000 default), keeping the newest rows', () => {
     const log = new EventLog(db, { maxRows: 3, maxAgeMs: 1_000_000_000 });
     for (let i = 0; i < 10; i += 1)

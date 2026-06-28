@@ -65,7 +65,13 @@ const SCAN_PAGE_SIZE_MAX = 500;
 const SCAN_PAGE_SIZES = new Set([10, 50, 100, 500]);
 const EVENT_PAGE_SIZE_DEFAULT = 100;
 const EVENT_PAGE_SIZE_MAX = 500;
-const LOG_CATEGORIES: ReadonlySet<string> = new Set(['auth', 'scan', 'other']);
+const LOG_CATEGORIES: ReadonlySet<string> = new Set([
+  'auth',
+  'scan',
+  'other',
+  'chronodrive',
+  'api_local',
+]);
 const SSE_KEEPALIVE_MS = 25_000;
 
 /** Parse a positive integer query param, clamped to `[1, max]`, falling back to `fallback`. */

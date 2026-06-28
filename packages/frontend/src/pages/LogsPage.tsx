@@ -15,6 +15,8 @@ const FILTERS: Array<{ value: Filter; label: string }> = [
   { value: 'all', label: 'Tous' },
   { value: 'auth', label: 'Authentification' },
   { value: 'scan', label: "Scan d'objet" },
+  { value: 'chronodrive', label: 'API Chronodrive' },
+  { value: 'api_local', label: 'API interne' },
   { value: 'other', label: 'Autre' },
 ];
 

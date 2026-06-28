@@ -8,6 +8,7 @@
 export * from './chronodrive/contract.js';
 export * from './ingest/contract.js';
 export * from './api/contract.js';
+export * from './api/local.js';
 export * from './logging/contract.js';
 
 /**

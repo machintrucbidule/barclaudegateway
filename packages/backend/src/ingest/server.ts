@@ -21,6 +21,7 @@ import { runHealthSelfTest } from '../health/selfTest.js';
 import { redactLogObject } from '../logging/redact.js';
 import { apiRoutes } from '../http/apiRoutes.js';
 import type { ApiDeps } from '../http/apiRoutes.js';
+import { localApiRoutes } from '../http/localApiRoutes.js';
 import { validateEan } from './ean.js';
 import type { IngestPipeline } from './pipeline.js';
 
@@ -106,6 +107,14 @@ export function buildServer(deps: ServerDeps, options: ServerOptions = {}): Fast
       errorMonitor: deps.errorMonitor,
       haWebhook: deps.haWebhook,
     },
+  });
+
+  // Local "Layer B" API (BL-008). Its own versioned prefix + encapsulated X-API-Key guard; mounted
+  // before static so `/api/v1/*` resolves to a handler, never the SPA fallback. The guard hook lives
+  // inside this plugin, so `POST /v1/scan` and the UI `/api/*` routes are unaffected.
+  void app.register(localApiRoutes, {
+    prefix: '/api/v1',
+    deps: { configStore: deps.configStore, emit: deps.emit },
   });
 
   app.post('/v1/scan', async (request, reply) => {

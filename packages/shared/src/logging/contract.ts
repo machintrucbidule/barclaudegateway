@@ -13,11 +13,15 @@
  */
 
 /**
- * Broad area a log line belongs to, used by the page filter (Authentification / Scan d'objet / Autre).
- * `other` is the catch-all for everything that is neither auth nor scan (health self-test, startup,
- * config/credentials changes, Home Assistant alerts).
+ * Broad area a log line belongs to, used by the page filter (Authentification / Scan d'objet / Autre /
+ * API Chronodrive / API interne). `other` is the catch-all for everything that is neither auth nor scan
+ * (health self-test, startup, config/credentials changes, Home Assistant alerts).
+ *
+ * The widened local-API surface (BL-009/DECISION-022) adds two categories so the new exchanges are
+ * filterable: `chronodrive` = an **upstream** call we make to the Chronodrive API ("API Chronodrive");
+ * `api_local` = an **inbound** request served by our own local "Layer B" API ("API interne").
  */
-export type LogCategory = 'auth' | 'scan' | 'other';
+export type LogCategory = 'auth' | 'scan' | 'other' | 'chronodrive' | 'api_local';
 
 /** Severity of a log line. `error` marks a failing step shown prominently on the page. */
 export type LogLevel = 'info' | 'warn' | 'error';
@@ -28,7 +32,12 @@ export type LogLevel = 'info' | 'warn' | 'error';
  *          a full re-login, and a `login_required` (session too old → full re-login needed).
  * - scan:  the ordered steps of one scan — barcode read, search request, product resolved or not found,
  *          each cart/list write, and the terminal outcome.
- * - other: a health self-test run, app startup, a config or credentials change, an HA webhook send.
+ * - other: a health self-test run, app startup, a config or credentials change, an HA webhook send, and
+ *          the boot-time local-API-key generation.
+ * - chronodrive: an upstream Chronodrive query made by the local API (product lookup/search, cart/list
+ *          read, price check) — added with BL-009; the call sites land in BATCH-8..10.
+ * - api_local: an inbound request served by the local "Layer B" API (the generic per-request line, plus
+ *          the recipe-fill composite) — added with BL-009.
  */
 export type LogEventType =
   | 'login_step1'
@@ -50,7 +59,18 @@ export type LogEventType =
   | 'startup'
   | 'config_change'
   | 'credentials_change'
-  | 'ha_alert';
+  | 'ha_alert'
+  // other: boot-time local-API key generation (BL-008).
+  | 'local_api_key_generated'
+  // chronodrive (upstream local-API queries; wired in BATCH-8..10).
+  | 'product_lookup'
+  | 'product_search'
+  | 'cart_read'
+  | 'list_read'
+  | 'price_check'
+  // api_local (inbound local-API requests).
+  | 'local_api_request'
+  | 'recipe_fill';
 
 /**
  * An event as emitted by the application, before it is persisted. The store assigns the `id` and, when

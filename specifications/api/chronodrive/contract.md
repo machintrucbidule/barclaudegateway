@@ -1,8 +1,8 @@
 # Chronodrive Private API — Contract Specification
 
-**Document version:** 1.4.3
+**Document version:** 1.5.0
 **Spec status:** Draft
-**Last full verification:** 2026-06-26 (re-verified live 2026-06-27, Phase 7 — confirmed endpoints unchanged, `x-api-version` values identical)
+**Last full verification:** 2026-06-26 (re-verified live 2026-06-27, Phase 7 — confirmed endpoints unchanged, `x-api-version` values identical; product/cart surface extended 2026-06-28 from a browser HAR — see 1.5.0)
 **Auth flow live-verified:** 2026-06-26 — full login (Steps 1+2+3) **and** silent refresh (Steps 2+3) executed end-to-end against production by the middleware (not just a browser HAR).
 **Primary source:** HAR captures from browser session (Firefox 152, authenticated) + live middleware run
 **Maintainer:** Ivan Calmels
@@ -40,6 +40,7 @@ Each endpoint entry references the HAR session that confirmed it. Keep HAR archi
 
 | Version | Date       | Summary                                                                                                                                                                                              |
 | ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.5.0   | 2026-06-28 | **Product/cart surface extended** from a browser HAR (2 product sheets + non-empty cart). New endpoints: **§5.12** `GET /v1/products/{id}` (full product sheet — nutrition, ingredients, allergens, origin, images, packaging **weight**, prices incl. `lastPeriodLowestPrice`), **§5.13** `GET /v1/products?searchTerm=` (rich paginated search returning full product objects), **§5.14** `GET /v1/products?ids=` (batch), **§5.3b** `GET /v1/customers/me/carts/extended`. New **Products** `x-api-key` (§3.1). New **§5.12.1 nutrition code map** (INFERRED). Patches to existing entries: **§5.1** search-suggestions now returns the full product object (nutrition + weight + full prices), **§5.3** documents the non-empty cart schema (items + expanded amounts), **§5.4** response gains `requestedCompleteAnimation`. Product image host `static1.chronodrive.com` (§1). CMS endpoints noted as ignored (§6). |
 | 1.4.3   | 2026-06-27 | §5.8 list add: duplicate add CONFIRMED **idempotent** — re-adding a product already in the list returns the same `204 No Content` and leaves the quantity unchanged, so the response is **indistinguishable** from a fresh add (membership must be read via §5.10). Captured by a live middleware probe (not a HAR), BL-005. |
 | 1.4.2   | 2026-06-26 | §3 data-API `Origin`/`Referer` note downgraded INFERRED → CONFIRMED: `api.chronodrive.com` `/v1/search-suggestions` exercised live by the middleware with the headers present (`ingest:smoke`, Phase 3) → 200. Whether the data API would reject a call *without* them is still untested (the middleware always sends them, so enforcement is moot). |
 | 1.4.1   | 2026-06-26 | Auth §2 live-verified by the middleware. Two corrections: (1) `/identity` + `/oauth/*` require `Origin`/`Referer` headers (else 400 "No origin or referer retrieved"); (2) Step 1 sets the initial Reach5 session cookie that must be forwarded to Step 2. Silent refresh now CONFIRMED live, not just inferred from the JWT. |
@@ -57,7 +58,14 @@ Each endpoint entry references the HAR session that confirmed it. Keep HAR archi
 | ------------------ | --------------------------------- | --------------- |
 | Chronodrive API    | `https://api.chronodrive.com/v1`  | HTTPS / HTTP2   |
 | Reach5 Identity    | `https://connect.chronodrive.com` | HTTPS / HTTP1.1 |
+| Static media (CDN) | `https://static1.chronodrive.com` | HTTPS           |
 | Analytics (ignore) | `https://metrics.chronodrive.com` | —               |
+
+> **Product images (CONFIRMED 1.5.0):** product image paths in API responses are **relative** (e.g.
+> `img/PM/P/0/74/0P_91574.gif`). The absolute URL is `https://static1.chronodrive.com/` + path. Image
+> kinds: `thumbnails` (small `.gif`), `views` (`.gif`), `zooms` (large `.jpg`). Path pattern embeds the
+> product id and its last two digits (`…/P/0/74/0P_91574.gif` for product `91574`). No auth/api-key
+> needed for the static host.
 
 The API gateway is **Gravitee** (header `x-gravitee-transaction-id` present on all responses). Cloudflare sits in front (`cf-ray` headers, `__cf_bm` cookie). No hard anti-bot measures observed as of 2026-06-26; `__cf_bm` is emitted automatically and does not require interaction.
 
@@ -229,9 +237,14 @@ The gateway uses **different static API keys per service**. These are embedded i
 | Service                | x-api-key                              | Endpoints                                                                 |
 | ---------------------- | -------------------------------------- | ------------------------------------------------------------------------- |
 | Search                 | `49a29e90-6842-4b90-8d09-07222f40b3ed` | `/v1/search-suggestions`                                                  |
+| Products               | `34bfe4e1-82d1-458a-9a51-61198fff84b3` | `/v1/products/{id}`, `/v1/products?searchTerm=…`, `/v1/products?ids=…`    |
 | Customer & Cart (read) | `c5e1b8ce-3a98-4871-842d-b7a60922ba97` | `/v1/customers/me`, `/v1/customers/me/carts`, `/v1/customers/me/settings` |
 | Cart (write)           | `3f796a97-e16a-4f3f-bd29-9523c7f28edb` | `POST /v1/carts/{cartId}/items`                                           |
 | Shopping lists         | `92f00545-3e4b-4d33-94d1-f535e934cece` | `/v1/shopping-lists/*`                                                    |
+
+> **Products key added 1.5.0** — the product detail/search/batch endpoints (`/v1/products*`) use a
+> distinct key from the lightweight `/v1/search-suggestions` autocomplete. Same rotation risk applies
+> (§3.1 risk note): a Products-key rotation breaks only the `/v1/products*` calls.
 
 > **Risk:** These keys are static application credentials, not user tokens. If Chronodrive rotates them (e.g. after a frontend deploy), all calls using the old key will return 401 or 403. Detection: start seeing 401s after a working session. Mitigation: re-extract from the JS bundle (search for the UUID pattern in `_nuxt/*.js`).
 
@@ -292,6 +305,16 @@ Key fields: `products[0].id` (Chronodrive internal product ID), `products[0].isE
 
 Returns empty `products[]` if EAN not found in catalogue. Returns `isEligible: false` if product exists but is unavailable at the requested `site_id`.
 
+> **PATCH 1.5.0 — schema is richer than the abbreviated example above.** As re-observed in the
+> 2026-06-28 HAR, each `products[]` entry is the **full product object** (the same shape as the §5.12
+> product sheet): it also carries `characteristics` (`features[]` = coded nutrition — see §5.12.1 —
+> `ingredients`, `origin`), `packaging` (incl. **`weight`**), `flags`, `images`, `descriptions`,
+> `complementaryProducts` / `substitutionProducts`, and the **full `prices`** block
+> (`pricePerUnitMeasure`, `lastPeriodLowestPrice`, `vatRate`, `depositPrice`). Version unchanged
+> (`x-api-version: 1.38.1`) — the original example was simply incomplete. So a single
+> `GET /v1/search-suggestions?searchTerm={ean}` already returns nutrition + weight; the §5.13
+> `GET /v1/products?searchTerm=` endpoint returns the same product shape with pagination + facets.
+
 ---
 
 ### 5.2 — Get customer profile
@@ -334,6 +357,67 @@ x-chronodrive-site-mode: DRIVE
 ```
 
 The active cart is `content[0]` where `isOrdered: false`. The cart `id` (UUID) is stable across sessions for a given account. Cache it; re-fetch only if a 404 is received on a cart write.
+
+> **PATCH 1.5.0 — non-empty cart schema (HAR 2026-06-28).** The example above is an *empty* cart. A
+> populated cart's `content[0]` has these fields: `id`, `items[]`, `amounts{}`, `coupons{content:[]}`,
+> `hasUnavailableProducts`, `unlockedLoyaltyBenefit`, `isOrdered`.
+>
+> **Each line item** (`items[]`):
+>
+> ```json
+> {
+>   "quantity": 1,
+>   "wishedQuantity": 1,
+>   "clientOrigin": "",
+>   "isGift": false,
+>   "product": { /* full §5.12 product sheet, plus per-line price fields: */
+>     "prices": { "...": "...", "totalAmount": 2.19, "totalDepositAmount": 0 },
+>     "maxCartQuantity": 999,
+>     "family": { "id": 635 },
+>     "associatedProducts": []
+>   }
+> }
+> ```
+>
+> **`amounts{}`** (cart totals — useful for a budget view):
+>
+> ```json
+> {
+>   "totalCartAmount": 10.51,
+>   "totalOrderAmount": 10.51,
+>   "totalCartAmountWithoutDiscount": 10.51,
+>   "totalDiscountAmount": 0,
+>   "totalDepositAmount": 0,
+>   "totalAdditionalCostsAmount": 0,
+>   "totalLoyaltyEarnedAmount": 0.16,
+>   "totalCouponLoyaltyEarnedAmount": 0,
+>   "totalLoyaltyBurntAmount": 0,
+>   "totalCreditsAmount": 0,
+>   "loyaltiesDonation": [],
+>   "additionalCosts": []
+> }
+> ```
+>
+> So a single `GET /v1/customers/me/carts?withCoupons=true` yields the full cart (line items with the
+> complete product sheet, line totals, and cart-level totals) — enough for a "current cart" + budget
+> aggregate without extra calls. `x-api-version: 1.9.0` (unchanged).
+
+---
+
+### 5.3b — Get active cart (extended, with delivery fees)
+
+**Status:** `CONFIRMED` — HAR `www.chronodrive.com_Archive [26-06-28 13-06-29].har`
+
+```
+GET /v1/customers/me/carts/extended?withCoupons=true&withDeliveryFees=true
+x-api-key: c5e1b8ce-3a98-4871-842d-b7a60922ba97
+x-chronodrive-site-id: {site_id}
+x-chronodrive-site-mode: DRIVE
+```
+
+Same response shape as §5.3 (incl. the non-empty schema above). The `extended` variant additionally
+resolves **delivery fees** into the `amounts`/`additionalCosts` when a delivery mode applies; in
+`DRIVE` mode with no delivery selected, the two responses are identical. `x-api-version: 1.9.0`.
 
 ---
 
@@ -381,6 +465,12 @@ Multiple products can be batched in the `content` array.
 ```
 
 `returnType` must equal `"SUCCESS"`. Other observed values: unknown — treat anything else as an error.
+
+> **PATCH 1.5.0 (HAR 2026-06-28):** each response `content[]` item also carries a boolean
+> **`requestedCompleteAnimation`** (observed `false`) alongside the documented fields. It relates to
+> the promotional "animation" block (§5.12) and is not needed for the add/remove decision — ignore it.
+> The request body (`clientOrigin: "WEB|ARBO|{id}"`, `optimizedMode: true`, signed `quantity`) is
+> unchanged and was re-confirmed. `x-api-version: 1.9.0`.
 
 If `quantity` exceeds `maxCartQuantity`, behavior is unknown (not captured).
 
@@ -660,15 +750,188 @@ This endpoint also confirms a third `stock` enum value: `NO_STOCK` (product exis
 
 ---
 
+### 5.12 — Get product sheet (full detail)
+
+**Status:** `CONFIRMED` — HAR `www.chronodrive.com_Archive [26-06-28 13-06-29].har`
+
+```
+GET /v1/products/{productId}
+x-api-key: 34bfe4e1-82d1-458a-9a51-61198fff84b3
+x-chronodrive-site-id: {site_id}
+x-chronodrive-site-mode: DRIVE
+```
+
+The "product page" endpoint. Returns everything the catalogue holds for one product. `x-api-version: 1.38.1`.
+
+**Response 200 (abridged — product `91574`, EAN `3596710335510`):**
+
+```json
+{
+  "id": "91574",
+  "labels": {
+    "productLabel": "Mozzarella di bufala campana AOP",
+    "brandLabel": "AUCHAN",
+    "brandLineLabel": "Tavola In Italia",
+    "unitQuantityLabel": "125 g",
+    "ticketLabel": "AUCHAN: Mozzarella 125 g"
+  },
+  "eans": ["3596710335510"],
+  "prices": {
+    "defaultPrice": 1.79,
+    "pricePerUnitMeasure": 14.32,
+    "lastPeriodLowestPrice": 1.79,
+    "depositPrice": 0,
+    "vatRate": 5.5,
+    "variantDiscount": 0,
+    "bestBeforeDateRate": 0
+  },
+  "stock": "HIGH_STOCK",
+  "remainingStock": 228,
+  "isEligible": true,
+  "packaging": {
+    "unit": "kg",
+    "unitMeasure": 0.125,
+    "weight": 0.125,
+    "height": 0.14, "length": 0.135, "width": 0.055
+  },
+  "images": {
+    "thumbnails": ["img/PM/V/0/74/0V_91574.gif"],
+    "views": ["img/PM/P/0/74/0P_91574.gif"],
+    "zooms": ["img/PM/Z/0/74/0Z_91574.jpg"]
+  },
+  "characteristics": {
+    "origin": "",
+    "ingredients": "Ingrédients : LAIT de bufflonne pasteurisé, sel, présure. Produit conservé en saumure.",
+    "allergens": [],
+    "features": [ { "code": "243", "value": "262" }, "… (see §5.12.1)" ]
+  },
+  "descriptions": { "conservation": "À conserver entre 0°C et +4°C…", "usage": "…", "ecology": "…" },
+  "flags": { "isAuchan": true, "isFresh": true, "isDiscount": true, "isFrozen": false, "…": "…" },
+  "animation": { "type": "VIRTUAL_DYNAMIC_PACK", "label": "5% cagnottés (dès 2 produits achetés)", "discountRate": 5, "minimalQuantity": 2, "…": "…" },
+  "seo": { "id": "P91574", "canonicalUrl": "/auchan--tavola-in-italia---mozzarella-di-bufala-campana-aop-P91574" },
+  "masterCategories": [ { "id": "16531916", "level": 1 } ],
+  "complementaryProducts": [ { "id": "122649", "images": { "…": "…" } } ],
+  "substitutionProducts": [ { "id": "476601" } ]
+}
+```
+
+Key fields for our use cases:
+
+- **Identity / labels** — `id`, `eans[]`, `labels.productLabel`, `labels.brandLabel`,
+  `labels.unitQuantityLabel` (human net quantity, e.g. `"125 g"`).
+- **Weight / packaging** — `packaging.weight` (net weight, **kg**), `packaging.unit` (`kg`/`L`),
+  `packaging.unitMeasure` (numeric quantity in that unit), plus physical `height`/`length`/`width` (m).
+- **Price** — `prices.defaultPrice` (€), `prices.pricePerUnitMeasure` (€/kg or €/L),
+  `prices.lastPeriodLowestPrice` (the EU "lowest price in the last 30 days" — useful for price-drop
+  detection), `prices.vatRate` (%), `prices.depositPrice` (consigne).
+- **Availability** — `stock` (`HIGH_STOCK`/`NO_STOCK`), `remainingStock`, `isEligible`.
+- **Nutrition / composition** — `characteristics.ingredients` (free text), `characteristics.allergens`
+  (often `[]`; the allergen statement is in `features` code `383`), and the coded
+  `characteristics.features[]` → see **§5.12.1**.
+- **Images** — relative paths; prefix with `https://static1.chronodrive.com/` (§1).
+- **Promo** — `animation` (loyalty / dynamic pack), `flags.isDiscount`.
+
+#### 5.12.1 — Nutrition code map (`characteristics.features[]`)
+
+**Status:** `INFERRED` (deduced from two product samples on 2026-06-28; consistent across both and
+matching the EU nutrition-declaration order + numeric sanity checks — **validate against a third
+product before relying on it in production**).
+
+`features` is an array of `{ code, value }`. `value` is a string for measured nutrients and a boolean
+for label flags. **Nutrition values are per the base in code `563`** (observed `"100 g"`).
+
+| code  | meaning                          | example (`91574` / `572811`) |
+| ----- | -------------------------------- | ---------------------------- |
+| `563` | nutrition reference base         | `100 g`                      |
+| `157` | energy — kJ                      | `1084` / `2114`              |
+| `243` | energy — kcal                    | `262` / `506`                |
+| `159` | fat (lipides) — g                | `23` / `27`                  |
+| `160` | of which saturates — g           | `16` / `5.4`                 |
+| `163` | carbohydrate (glucides) — g      | `0.700` / `50`               |
+| `164` | of which sugars — g              | `0.700` / `6.3`              |
+| `167` | fibre — g                        | (absent) / `5.5`             |
+| `168` | protein (protéines) — g          | `13` / `13`                  |
+| `169` | salt (sel) — g                   | `0.570` / `1.8`              |
+| `520` | Nutri-Score grade (`A`–`E`)      | `C` / `D`                    |
+| `383` | allergen statement (free text)   | `Contient : Lait` / `BLÉ, GLUTEN, LAIT, ŒUF…` |
+| `759` | origin (free text)               | `ITALIE pour AUCHAN SAS OIA` / `FRANCE` |
+| `760` | origin country                   | `Italie` / (absent)          |
+
+A nutrient field may be **absent** when the manufacturer did not declare it (e.g. fibre on `91574`).
+All other `features` codes (≈50, mostly booleans: bio / AOP / frozen / local / packaging claims, plus
+manufacturer name/address `351`/`353`, legal denomination `357`, contact `369`) are **intentionally
+not mapped** — out of scope for the current use cases (decision recorded in `decisions.md`).
+
+---
+
+### 5.13 — Search products (rich, paginated)
+
+**Status:** `CONFIRMED` — HAR `www.chronodrive.com_Archive [26-06-28 13-06-29].har`
+
+```
+GET /v1/products?searchTerm={ean|keywords}&page=1&size={n}
+x-api-key: 34bfe4e1-82d1-458a-9a51-61198fff84b3
+x-chronodrive-site-id: {site_id}
+x-chronodrive-site-mode: DRIVE
+```
+
+The catalogue search behind the site's search bar. Unlike the lightweight `/v1/search-suggestions`
+(§5.1), the response `content[]` items are **full product objects** (the §5.12 shape, nutrition +
+weight included), wrapped with pagination and facets. `x-api-version: 1.11.0`.
+
+**Response 200 (abridged):**
+
+```json
+{
+  "page": { "size": 1, "totalElements": 1, "totalPages": 1, "number": 1, "hasNext": false, "isEmpty": false },
+  "sortableFields": [ { "code": "Prix croissants", "label": "Prix croissants", "active": false }, "…" ],
+  "facets": [ { "code": "pred-sorted-pred-yuka", "label": "Score Yuka", "values": [ { "code": "00000002", "label": "Médiocre", "nbResults": 1 } ] } ],
+  "content": [ { "id": "572811", "labels": { "…": "…" }, "characteristics": { "features": [ "…" ] }, "prices": { "…": "…" }, "packaging": { "weight": 0.1 } } ]
+}
+```
+
+- **EAN → product**: `GET /v1/products?searchTerm={ean}&page=1&size=1` → `content[0]` is the full
+  product (nutrition + weight) in **one call**. Returns empty `content[]` if not found.
+- **Keyword search**: `searchTerm={keywords}&size={n}` → a page of products; `page` is 1-indexed.
+- The frontend also sends `&withFeaturedSell=true&withPushLists=true&includeNavigationInFacets=false&withKamino=true&kaminoMode=ADVANCED`; these add merchandising blocks and are **optional** (the bare
+  `searchTerm`/`page`/`size` form returns the products + facets shown above).
+- `facets` expose `Score Yuka` and `Nutriscore` filters; `sortableFields` include price/relevance/best-sellers. Not required for a simple lookup.
+
+---
+
+### 5.14 — Get multiple products by id (batch)
+
+**Status:** `CONFIRMED` — HAR `www.chronodrive.com_Archive [26-06-28 13-06-29].har`
+
+```
+GET /v1/products?ids=122649&ids=522947&ids=76003&ids=89700
+x-api-key: 34bfe4e1-82d1-458a-9a51-61198fff84b3
+x-chronodrive-site-id: {site_id}
+x-chronodrive-site-mode: DRIVE
+```
+
+Repeated `ids` query params → an array of full product objects (the §5.12 shape). Used by the frontend
+to hydrate complementary/substitution products in one round-trip. Useful for resolving several
+products at once (e.g. a recipe's ingredient list). Response is a list of products (same item shape as
+§5.13 `content[]`).
+
+---
+
 ## §6 — Known Gaps
 
 Endpoints that must be captured before full implementation. Priority order:
 
-| Priority | Endpoint                           | Blocking?                                  | Capture method                                             |
-| -------- | ---------------------------------- | ------------------------------------------ | ---------------------------------------------------------- |
-| Low      | Full product schema field meanings | No                                         | Inspect `search-suggestions` response                     |
+| Priority | Endpoint / topic                    | Blocking? | Capture method                                            |
+| -------- | ----------------------------------- | --------- | --------------------------------------------------------- |
+| Low      | Nutrition code map (§5.12.1)         | No        | Currently INFERRED from 2 samples — confirm against a 3rd product |
+| Low      | Full `features` code dictionary      | No        | ~50 boolean/label codes intentionally **not** mapped (out of scope) |
+| Low      | `stock` enum `LOW_STOCK`             | No        | Only `HIGH_STOCK`/`NO_STOCK` observed; `LOW_STOCK` still inferred |
 
-Previously-listed gaps now closed: **Get shopping lists (§5.7)** — CONFIRMED since 1.3.0. **Token refresh** — CONFIRMED LIVE in 1.4.1 (silent Steps 2+3 exercised by the middleware, not a separate endpoint).
+> **Ignored surfaces (not in scope):** the CMS content endpoints seen alongside product/cart calls
+> (`/cms/v3/content_types/bubble_message/entries/`, `/cms/v3/content_types/push_top_basket/entries/`)
+> are marketing/banner content (tiny, often empty responses) and are deliberately not modelled.
+
+Previously-listed gaps now closed: **Get shopping lists (§5.7)** — CONFIRMED since 1.3.0. **Token refresh** — CONFIRMED LIVE in 1.4.1 (silent Steps 2+3 exercised by the middleware, not a separate endpoint). **Full product schema (§5.12)** — CONFIRMED 1.5.0 (product sheet captured: nutrition, ingredients, allergens, origin, packaging weight, full prices, images). **Non-empty cart schema (§5.3)** — CONFIRMED 1.5.0.
 
 **Confirmed since initial draft (2026-06-26):**
 
@@ -719,6 +982,7 @@ Once a month (or after any Chronodrive frontend deploy detected via version head
 Observed API versions as of 2026-06-26:
 
 - `/v1/search-suggestions`: `1.38.1`
+- `/v1/products/{id}`: `1.38.1` · `/v1/products?searchTerm=` (search): `1.11.0` *(added 1.5.0, 2026-06-28)*
 - `/v1/customers/me`, `/v1/customers/me/settings`: `1.4.0` / `1.1.0`
 - `/v1/customers/me/carts`: `1.9.0`
 - `/v1/carts/{cartId}/items`: `1.9.0`
@@ -727,6 +991,10 @@ Observed API versions as of 2026-06-26:
 **Re-verified live 2026-06-27 (Phase 7, deployed middleware self-test):** all four probed endpoints
 returned the same `x-api-version` values — `/v1/customers/me` `1.4.0`, `/v1/search-suggestions`
 `1.38.1`, `/v1/customers/me/carts` `1.9.0`, `/v1/shopping-lists` `1.5.0`. No drift.
+
+**Re-checked 2026-06-28 (browser HAR):** `/v1/search-suggestions` `1.38.1` and `/v1/customers/me/carts`
+`1.9.0` unchanged (no drift on documented endpoints); the new `/v1/products*` endpoints reported
+`1.38.1` (detail) / `1.11.0` (search).
 
 ---
 

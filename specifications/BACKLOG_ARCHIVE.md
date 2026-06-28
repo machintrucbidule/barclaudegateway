@@ -6,7 +6,79 @@
 >
 > Newest entries on top. Nothing here is active work — the active backlog is [`BACKLOG.md`](./BACKLOG.md).
 >
-> Last updated: 2026-06-28 (BATCH-6 — BL-007 lazy mode no longer force-fetches the config-page lists; backlog now empty)
+> Last updated: 2026-06-28 (BATCH-7 — BL-008 local API foundation + BL-009 logging taxonomy, DECISION-023, app v0.3.0)
+
+---
+
+## BATCH-7 — Local API foundation + logging taxonomy (P1) — shipped 2026-06-28
+
+> Developed via loop prompt 2 on branch `feature/batch-7-local-api-foundation` (app **v0.3.0**). First
+> build under the DECISION-022 scope expansion: stands up the local "Layer B" API and splits the
+> operational-log taxonomy to identify upstream-Chronodrive vs inbound-local exchanges. Recorded as
+> **DECISION-023**. Middleware + shared types + UI filters + a new local contract doc; upstream
+> `contract.md` unchanged.
+
+### [BL-008] Stand up the local API (Layer B): contract, versioned prefix, `X-API-Key`, route skeleton
+
+- Type: Evolution · Priority: P1 · Batch: BATCH-7 · Source: user remark (2026-06-28)
+- **Date shipped**: 2026-06-28
+- **Approved design decisions (DECISION-023, user's choices)**: empty key → **auto-generate at boot**;
+  the key is **app-managed, not editable in the config page** (*"c'est nous qui la gérons"*).
+- **What was actually done**:
+  - **Contract doc**: new `specifications/api/local/contract.md` (v0.1.0) — the "output contract": the
+    `/api/v1` prefix, the `X-API-Key` header + auto-managed-key model, the `LocalApiError` error model,
+    `GET /api/v1/ping` (`IMPLEMENTED`), and every BATCH-8..10 endpoint catalogued as `PLANNED`. Referenced
+    from `PROJECT_CONTEXT.md`.
+  - **Versioned prefix `/api/v1`** (separate from the UI `/api/*` and the ESP `POST /v1/scan`).
+  - **Skeleton router + guard** (`packages/backend/src/http/localApiRoutes.ts`): an encapsulated
+    `onRequest` hook reads `local_api_key` fresh per request and compares it constant-time
+    (`timingSafeEqual`) to `X-API-Key` → 401 on missing/wrong/empty; an `onResponse` hook journals every
+    served request as an `api_local` event; a prefix-scoped JSON 404; a `GET /ping` stub
+    (`{ status: 'ok', version: 1 }`). Registered in `ingest/server.ts` before static.
+  - **App-managed key**: `bootstrap.ensureLocalApiKey` generates one (`randomBytes(24).base64url`) on
+    first boot when empty, persists it via `ConfigStore.set`, and surfaces it once (a
+    `local_api_key_generated` log event carrying the key + a stdout line). The key is kept out of the
+    shared `ApiConfig` and out of `appConfigToEntries`, so `GET/PUT /api/config` can never expose, accept,
+    or clobber it. New backend config field `localApiKey` (`CONFIG_KEYS.localApiKey = 'local_api_key'`,
+    optional, default `''`).
+  - **Shared types**: new `packages/shared/src/api/local.ts` (`LOCAL_API_PREFIX`, `LOCAL_API_KEY_HEADER`,
+    `LocalApiError`, `LocalApiStatus`), barrel-exported.
+- **Acceptance criteria — met**: no/wrong key → 401; right key → 200 stub; `POST /v1/scan` and `/api/*`
+  unaffected (no key required, key never exposed); `PUT /api/config` never drops/exposes the key; types
+  compile; the Layer-B contract doc exists and is referenced from PROJECT_CONTEXT.md.
+
+### [BL-009] Extend the event-logging taxonomy to identify Chronodrive vs internal-API exchanges
+
+- Type: Evolution · Priority: P1 · Batch: BATCH-7 · Source: user remark (2026-06-28)
+- **Date shipped**: 2026-06-28
+- **What was actually done**:
+  - **Shared** (`packages/shared/src/logging/contract.ts`): `LogCategory` gained `chronodrive` ("API
+    Chronodrive", upstream) and `api_local` ("API interne", inbound); `LogEventType` gained
+    `product_lookup`/`product_search`/`cart_read`/`list_read`/`price_check` (chronodrive),
+    `local_api_request`/`recipe_fill` (api_local), and `local_api_key_generated` (other).
+  - **Backend** (`packages/backend/src/http/apiRoutes.ts`): `LOG_CATEGORIES` (the `GET /api/events`
+    filter) accepts the two new categories.
+  - **Frontend**: `components/logEvent.tsx` `CATEGORY` map gained both (orange "API Chronodrive", teal
+    "API interne"); `pages/LogsPage.tsx` `FILTERS` gained both controls.
+  - The **api_local** path is exercised live now (the ping's `onResponse` emits one event per served
+    request); the **chronodrive** category is shipped + unit-tested now and gets real call sites in
+    BATCH-8. Redaction (DECISION-018) intact.
+- **Acceptance criteria — met**: an inbound local-API call appears on `/logs` as **API interne**; the
+  filter isolates **API Chronodrive** vs **API interne**; the new categories are accepted by
+  `GET /api/events`; existing auth/scan/other logs + redaction tests still pass.
+
+### Tests & gates (both items)
+
+- **Tests** (all green: **204** total — 184 backend + 20 frontend; 12 new backend tests):
+  new `localApiRoutes.test.ts` (401 no/wrong key, 200 ping, locked-when-empty, `api_local` journalling,
+  JSON 404); `bootstrap.test.ts` (auto-gen on first boot + `ensureLocalApiKey` idempotence); extended
+  `apiRoutes.test.ts` (ping guard + no-regression on `/api/*`+`/v1/scan`, key never exposed/clobbered,
+  `chronodrive` filter); extended `eventLog.test.ts` (new-category filtering).
+- **Gates**: lint, typecheck, full build — all green.
+- **Docs/specs**: `decisions.md` (DECISION-023), `PROJECT_CONTEXT.md`, new `api/local/contract.md`. Root
+  `package.json` bumped **0.2.2 → 0.3.0**. Upstream `contract.md` unchanged.
+
+- **Commit/PR**: branch `feature/batch-7-local-api-foundation` (loop prompt 2, 2026-06-28).
 
 ---
 

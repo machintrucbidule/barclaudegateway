@@ -2,7 +2,7 @@
 
 > Decisions are added here as they are resolved. Each entry records: the question, the options considered, the choice made, and who decided.
 > All Phase 0 functional clarifications (CLARIFY-_) and architecture decisions (DECISION-_) are now resolved.
-> Last updated: 2026-06-28 (DECISION-021 refined for BL-007/BATCH-6 — lazy mode also suppresses the config-page destinations auto-fetch; session-aware gate + manual `POST /api/config/destinations/refresh`)
+> Last updated: 2026-06-28 (DECISION-023 — BATCH-7 local API foundation: `/api/v1` prefix, app-managed `X-API-Key`, Chronodrive/interne log split, BL-008/BL-009; app v0.3.0)
 
 ---
 
@@ -625,6 +625,103 @@
   authenticate only on demand). Scope: middleware + UI only; **`contract.md` UNCHANGED**. Shipped in
   BATCH-6 (loop prompt 2, 2026-06-28) on `feature/batch-6-lazy-destinations`; full entry in
   `BACKLOG_ARCHIVE.md`.
+
+---
+
+### [DECISION-022] Scope expansion — local Chronodrive query API (Layer B) and its enabling decisions
+
+- **Date**: 2026-06-28
+- **Question**: the gateway was a single-purpose scan→cart/list bridge. The user wants to widen it into
+  a **local personal API** that lets several devices/apps query Chronodrive (product, nutrition, price,
+  cart, lists), with its **own interface contract**, and that enables (not builds) integration with his
+  **macronome** app (push a food to the Chronodrive cart; create a food in macronome with nutrition
+  auto-fetched). What is in scope, and what are the enabling choices?
+- **Triage method**: loop-1 (intake/triage) — 10 use cases proposed → all retained; missing knowledge
+  identified (only 2 Chronodrive unknowns: product sheet + non-empty cart) → **HAR captured first**
+  (2026-06-28) and `contract.md` amended to **1.5.0** (§5.12/5.13/5.14 + patches; nutrition code map
+  §5.12.1). The local API itself ("Layer B") is a **new contract document** to be written in dev.
+- **Decisions** (each surfaced to the user, who chose):
+  - **Scope**: all **10** use cases retained — Macronome cart-add (1) / nutrition auto (2) /
+    nutrition+budget dashboard (10); generic search (3) + detailed product sheet (4); read cart (5) /
+    manage lists remotely (6) / fill from a recipe (9); price tracking+alert (7) / stock check (8).
+  - **Two API layers**: **upstream** Chronodrive (`contract.md`, the API we consume — now v1.5.0) vs a
+    **new local API** ("Layer B") with its own contract doc, a dedicated versioned route prefix, served
+    by the same Fastify app next to `POST /v1/scan` (unchanged).
+  - **Local API auth = a simple `X-API-Key`** (a shared key configurable in the UI), **not** "no auth":
+    the surface now exposes read+write to several clients, so a lightweight guard prevents an accidental
+    LAN caller from mutating the cart. (Still local-only; no strong auth — Cloudflare Tunnel isolation
+    unchanged.)
+  - **Price tracking (UC7) lives inside the gateway**: a price-history store + per-product thresholds +
+    a scheduler + a Home-Assistant webhook (reuses the §DECISION-014 `HaWebhookNotifier` pattern),
+    rather than delegating polling to Home Assistant.
+  - **Nutrition mapping = essential set only** (§5.12.1: energy kJ/kcal, fat, saturates, carbohydrate,
+    sugars, fibre, protein, salt, Nutri-Score, allergens, origin); the ~50 boolean/label `features`
+    codes are intentionally left unmapped.
+  - **EAN resolution path = both** keyword search and direct-EAN, both served by upstream
+    `GET /v1/products?searchTerm=` (one call yields the full product incl. nutrition + weight).
+  - **Operational-logging visibility**: every new exchange must be journalled and shown on the
+    `/logs` (Logs techniques) page, **clearly identified as "API Chronodrive" (upstream) vs "API
+    interne" (local API)** — extends the DECISION-018 `LogEvent` taxonomy + the page filters.
+- **Decided by**: User (Ivan) — scope, auth model, price-tracking placement, nutrition-mapping depth,
+  EAN path and logging-visibility all chosen explicitly from presented trade-offs.
+- **Rationale**: capture the upstream knowledge once (HAR-first) so the contract is frozen before any
+  code; keep the consumed API (`contract.md`) and the exposed API (Layer B) as two clear contracts; a
+  light API key fits a multi-client local surface without heavy auth; in-gateway price tracking keeps
+  the feature self-contained and observable; mapping only the nutrition codes that macronome needs
+  avoids guessing ~50 undocumented codes; and per-exchange, clearly-labelled logs keep the widened
+  surface debuggable.
+- **Scope of artifacts**: `contract.md` **already amended to 1.5.0** (this session). The build is
+  staged into **BATCH-7..11** in `BACKLOG.md` (foundation+logging taxonomy → products/nutrition →
+  cart/lists → price tracking → wiring/UI/YAML/docs/tests), developed via loop-2. The local API
+  contract document is written in BATCH-7.
+- **Status**: triaged 2026-06-28; development pending (loop-2). No app version bump yet (no code shipped
+  this session — spec/triage only).
+
+---
+
+### [DECISION-023] Local API foundation: `/api/v1` prefix, app-managed `X-API-Key`, Chronodrive/interne log split (BATCH-7 / BL-008, BL-009)
+
+- **Date**: 2026-06-28
+- **Question**: how to stand up the local "Layer B" API (DECISION-022) — the route prefix, the auth
+  guard and how its key is managed, and how the widened surface is identified in the operational logs —
+  without disturbing `POST /v1/scan` or the internal UI `/api/*`.
+- **Decisions** (each surfaced to the user, who chose):
+  - **Versioned prefix `/api/v1`** for the local API, separate from the UI `/api/*` and the ESP
+    `POST /v1/scan`. The major version lives in the path; a new local contract document
+    (`specifications/api/local/contract.md`, v0.1.0) is the "output contract" and catalogues every
+    BATCH-8..10 endpoint as `PLANNED`. BATCH-7 ships only `GET /api/v1/ping` + the guard.
+  - **`X-API-Key` guard via an encapsulated Fastify `onRequest` hook** on the `/api/v1` plugin: the key
+    is read fresh from config per request and compared constant-time; missing/wrong/empty → 401. Because
+    the hook lives inside the plugin's child context, `POST /v1/scan` and `/api/*` are untouched.
+  - **The key is auto-generated and backend-managed, NOT user-editable** (the user's explicit choice —
+    *"c'est nous qui la gérons, quel intérêt de la modifier là ?!"*). On first boot, when `local_api_key`
+    is empty, `bootstrap.ensureLocalApiKey` generates one (`randomBytes(24).base64url`), persists it
+    directly via `ConfigStore.set`, and surfaces it **once** — a `local_api_key_generated` operational
+    event (carrying the key in `detail`, deliberately not redacted) plus a stdout line. It is kept out of
+    the shared `ApiConfig` and out of `appConfigToEntries`, so the user-facing `GET/PUT /api/config` can
+    never expose, accept, or clobber it. The user retrieves it from the Logs techniques page / container
+    logs. (A read-only config-page display, if ever wanted, is deferred to BL-013.)
+  - **Logging taxonomy split (BL-009)**: two new `LogCategory` values — `chronodrive` (upstream calls we
+    make, labelled "API Chronodrive") and `api_local` (inbound local-API requests we serve, "API
+    interne") — plus the new `LogEventType`s for the planned operations (`product_lookup`,
+    `product_search`, `cart_read`, `list_read`, `price_check`, `recipe_fill`, `local_api_request`, and
+    the `local_api_key_generated` system event). The `/api/events` filter and the `/logs` page
+    filter/badges gain both categories. Redaction (DECISION-018) is intact. In BATCH-7 the **api_local**
+    path is exercised live (the ping's `onResponse` hook emits one per request); the **chronodrive**
+    category is shipped + unit-tested now and gets real call sites in BATCH-8.
+- **Decided by**: User (Ivan) — empty-key behaviour (auto-generate) and key visibility (app-managed, not
+  editable in the config page) chosen explicitly; the prefix, guard mechanism and taxonomy split
+  presented and approved.
+- **Rationale**: a path-versioned prefix keeps the three surfaces unambiguous; an encapsulated hook gives
+  the new surface its own guard without risking the proven scan/UI paths; an auto-generated, app-managed
+  key is usable out-of-the-box and removes a pointless edit affordance while keeping the key off the
+  user-facing config contract; and a Chronodrive-vs-interne log split keeps the widened surface
+  debuggable per the epic's cross-cutting acceptance.
+- **Scope**: middleware + shared types + UI filter/badges + the new local contract doc. The **upstream**
+  `contract.md` is UNCHANGED (already at 1.5.0). `auth_mode` lazy/keep-alive (DECISION-021) is preserved
+  (the skeleton makes no Chronodrive call; BATCH-8+ handlers reuse `auth.getAccessToken()`).
+- **Shipped in**: BATCH-7 (loop prompt 2, 2026-06-28) on `feature/batch-7-local-api-foundation`, app
+  version **0.3.0**. Full entries in `BACKLOG_ARCHIVE.md`.
 
 ---
 

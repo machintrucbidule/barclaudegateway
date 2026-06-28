@@ -1,8 +1,11 @@
 # BarclaudeGateway — Project Context
 
 > **This file is read at the start of every development step.** Keep it up to date.
-> Last updated: 2026-06-28 (BATCH-6 — BL-007: lazy mode no longer force-fetches the shopping lists on
-> the config page; cached display + manual `POST /api/config/destinations/refresh`, refines DECISION-021)
+> Last updated: 2026-06-28 (**BATCH-7 shipped — DECISION-023, app v0.3.0**: the local "Layer B" API
+> foundation (`/api/v1` prefix, app-managed `X-API-Key`, `GET /api/v1/ping` stub; BL-008) + the logging
+> taxonomy split into **API Chronodrive** vs **API interne** (BL-009). New `api/local/contract.md` v0.1.0.
+> Next top batch: **BATCH-8** (products & nutrition). Previously: BATCH-7 triaged as DECISION-022;
+> `contract.md` at **1.5.0**.)
 
 ---
 
@@ -19,7 +22,8 @@ npm-workspaces monorepo (DECISION-006), bootstrapped in Phase 1:
 ```
 barclaudegateway/
   specifications/
-    api/chronodrive/contract.md  ← Chronodrive private API spec (reverse-engineered, v1.4.0)
+    api/chronodrive/contract.md  ← Chronodrive UPSTREAM private API spec (reverse-engineered, v1.5.0)
+    api/local/contract.md        ← LOCAL API "Layer B" contract (v0.1.0, foundation shipped BATCH-7; DECISION-022/023)
     PROJECT_CONTEXT.md           ← this file
     ROADMAP.md                   ← development roadmap (generated, living doc)
     decisions.md                 ← all architecture decisions with rationale
@@ -43,9 +47,12 @@ barclaudegateway/
 > workflow (`.github/workflows/release.yml`, tag-triggered) + a no-push PR build check
 > (`docker-build.yml`), the Portainer stack (`deploy/stack.yml`), and `docs/deployment.md`
 > (Phase 6, DECISION-015). Docker is still never built or tested on Windows — only CI builds it.
-> The version started at **0.0.1**; **current published version is `0.2.2`** — it ships **BATCH-6**
-> (BL-007: lazy mode no longer force-fetches the shopping lists on the config page; cached display +
-> manual `POST /api/config/destinations/refresh`, refines DECISION-021). `0.2.1` shipped **BATCH-5**
+> The version started at **0.0.1**; **current version is `0.3.0`** — it ships **BATCH-7** (BL-008 local
+> "Layer B" API foundation: `/api/v1` prefix + app-managed `X-API-Key` guard + `GET /api/v1/ping` stub +
+> new `api/local/contract.md`; BL-009 logging taxonomy split into API Chronodrive vs API interne;
+> DECISION-023). `0.2.2` shipped **BATCH-6** (BL-007: lazy mode no longer force-fetches the shopping lists
+> on the config page; cached display + manual `POST /api/config/destinations/refresh`, refines
+> DECISION-021). `0.2.1` shipped **BATCH-5**
 > (configurable auth-token policy `auth_mode` lazy vs keep-alive, DECISION-021; the first middleware
 > code change since `0.1.1`). `0.2.0` was the maintenance-loop milestone: **BATCH-1** (ESP32 hardware
 > validated; LED-only Home-Assistant-integrated scanner firmware, DECISION-020) and **BATCH-4**
@@ -129,6 +136,35 @@ Auth flow (Reach5 PKCE) — **live-verified end-to-end by the middleware 2026-06
 - Per-service static API keys exist — if one key rotates, only that service breaks
 - `x-api-version` response header signals Chronodrive backend deploys (monitor this)
 - All endpoints confirmed, no remaining spec gaps
+- **Product/cart surface extended (v1.5.0, 2026-06-28, DECISION-022):** new **Products** service
+  (`x-api-key 34bfe4e1…`) — `GET /v1/products/{id}` (full sheet: nutrition, ingredients, allergens,
+  origin, images, **packaging.weight**, prices incl. `lastPeriodLowestPrice`), `GET /v1/products?searchTerm=`
+  (rich paginated search, same product shape), `GET /v1/products?ids=` (batch); `GET /v1/customers/me/carts/extended`.
+  Nutrition is **coded** in `characteristics.features[]` (essential map in contract §5.12.1: 157=kJ,
+  243=kcal, 159=fat, 160=saturates, 163=carbs, 164=sugars, 167=fibre, 168=protein, 169=salt,
+  520=Nutri-Score, 383=allergens, 759/760=origin). Product images: `https://static1.chronodrive.com/` +
+  relative path. `/v1/search-suggestions` (§5.1) also returns this full shape now (patched).
+
+### Local API ("Layer B") — DECISION-022/023
+
+Full spec: `specifications/api/local/contract.md` (v0.1.0). A **second** API the gateway *exposes* on the
+LAN (distinct from the upstream Chronodrive API we consume and the internal UI `/api/*`), so other apps —
+notably **macronome** — can query Chronodrive through it (products, nutrition, price, cart, lists).
+
+- **Foundation shipped (BATCH-7, BL-008):** versioned prefix **`/api/v1`** on the same Fastify app; an
+  **`X-API-Key`** guard (an encapsulated `onRequest` hook, constant-time compare, 401 on missing/wrong/
+  empty) that leaves `POST /v1/scan` and `/api/*` untouched; a `GET /api/v1/ping` health stub. Data
+  endpoints (search, product sheet, cart, lists, recipe-fill, price-tracking) are specified as `PLANNED`
+  in the contract and built in BATCH-8..10.
+- **The local API key is auto-generated and app-managed** (DECISION-023, user's choice): generated on
+  first boot when empty (`bootstrap.ensureLocalApiKey`), persisted as the `local_api_key` config row,
+  surfaced **once** (a `local_api_key_generated` log event carrying the key + a stdout line) for retrieval.
+  It is **not user-editable** and **never** part of `GET/PUT /api/config` — deliberately kept out of the
+  shared `ApiConfig` and out of `appConfigToEntries` so the user-facing config flow can't expose or
+  clobber it. Rotation takes effect without a restart (read fresh per request).
+- **Observability:** every inbound local-API request is journalled as an `api_local` ("API interne") event
+  and every upstream call it makes as a `chronodrive` ("API Chronodrive") event (BL-009), both filterable
+  on `/logs`. `auth_mode` lazy/keep-alive (DECISION-021) is preserved.
 
 ### ESP32 / ESPHome side
 
@@ -145,7 +181,8 @@ Auth flow (Reach5 PKCE) — **live-verified end-to-end by the middleware 2026-06
 - Pages: Config, Dashboard, **Operational logs**, **Scan history**, API error/maintenance page
   - **Operational logs** (technical): the exchanges with the Chronodrive auth server, the per-step detail
     of each scan (barcode read → search request → product id found → cart/list add request → result), and
-    **every token refresh**, with errors shown clearly; **live tail**; filter Auth / Scan / Other / All.
+    **every token refresh**, with errors shown clearly; **live tail**; filter Auth / Scan / **API
+    Chronodrive** (upstream calls) / **API interne** (inbound local-API requests) / Other / All (BL-009).
   - **Scan history**: a searchable, filterable, **paginated** history of scanned codes and each code's
     status; **not** live-updated (a new scan does not auto-append).
   - **Spec correction (2026-06-27)**: the original single "Real-time log stream" wording was ambiguous and
@@ -218,6 +255,8 @@ All Phase 0 architecture decisions and functional clarifications are resolved. S
 | Operational event-logging + scan history | RESOLVED | Dedicated `EventLog`/`EventLogBus` + `event_log` table, `LogEvent` taxonomy, 50 000-row/10-y retention, SSE tail; scan page split into operational logs + searchable history (DECISION-018, BL-003/004) |
 | "Already in list" as a distinct scan state | RESOLVED | Not built — duplicate list-add is an idempotent `204` (already green `added`); documented (contract.md §5.8) and closed by investigation (DECISION-019, BL-005) |
 | Auth-token policy: lazy vs keep-alive          | RESOLVED | `auth_mode` config key; lazy = on-demand login only + dormant self-test while idle, keep-alive = ~2h refresh + proactive self-test; fresh→lazy, upgraded→keep-alive; manual `POST /api/health/connect` (DECISION-021, BL-006). **Refined (BL-007):** lazy also skips the config-page list auto-fetch (session-aware gate + `DestinationsResponse.listsIdle` + manual `POST /api/config/destinations/refresh`) |
+| Scope expansion: local Chronodrive query API ("Layer B") | TRIAGED | All 10 use cases; new local API w/ own contract + `X-API-Key`; in-gateway price tracking; essential nutrition-code map; logs identify Chronodrive vs internal exchanges. `contract.md`→1.5.0. Staged BATCH-7..11 (DECISION-022). **BATCH-7 shipped → DECISION-023.** |
+| Local API foundation + logging taxonomy (BATCH-7) | RESOLVED | `/api/v1` prefix; encapsulated `X-API-Key` guard; **auto-generated, app-managed key** (not in `ApiConfig`, not config-editable); `chronodrive`/`api_local` log split; `api/local/contract.md` v0.1.0; `GET /api/v1/ping` stub (DECISION-023, BL-008/009, v0.3.0) |
 
 ---
 
