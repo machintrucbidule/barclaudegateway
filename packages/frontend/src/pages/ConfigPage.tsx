@@ -48,6 +48,7 @@ function DestinationsSection(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -95,6 +96,21 @@ function DestinationsSection(): JSX.Element {
     }
   };
 
+  // BL-007: force the live list fetch on demand (triggers a login in lazy mode). Repopulate the live
+  // choices without resetting the user's in-progress cart/checkbox selection.
+  const refresh = async (): Promise<void> => {
+    setRefreshing(true);
+    setError(null);
+    try {
+      const fresh = await api.refreshDestinations();
+      setData(fresh);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Rechargement impossible');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   return (
     <Card withBorder>
       <Stack>
@@ -102,6 +118,12 @@ function DestinationsSection(): JSX.Element {
         <Text size="sm" c="dimmed">
           Un scan alimente toutes les destinations cochées.
         </Text>
+        {data.listsIdle && (
+          <Alert color="blue">
+            Mode économique : les listes affichées proviennent du cache et peuvent être obsolètes.
+            Le rechargement déclenche une connexion à Chronodrive.
+          </Alert>
+        )}
         {data.listsError && (
           <Alert color="yellow">
             Listes Chronodrive indisponibles ({data.listsError.category}). Les listes déjà
@@ -130,6 +152,11 @@ function DestinationsSection(): JSX.Element {
           <Button onClick={() => void save()} loading={saving}>
             Enregistrer les destinations
           </Button>
+          {(data.listsIdle || data.listsError) && (
+            <Button variant="default" onClick={() => void refresh()} loading={refreshing}>
+              Recharger les listes depuis Chronodrive
+            </Button>
+          )}
           {saved && (
             <Text c="green" size="sm">
               Enregistré.

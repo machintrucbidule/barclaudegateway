@@ -1,8 +1,8 @@
 # BarclaudeGateway — Project Context
 
 > **This file is read at the start of every development step.** Keep it up to date.
-> Last updated: 2026-06-28 (BATCH-5 — BL-006: configurable auth-token policy `auth_mode` lazy vs
-> keep-alive, DECISION-021. Fresh installs default to lazy; upgraded DBs stay keep-alive)
+> Last updated: 2026-06-28 (BATCH-6 — BL-007: lazy mode no longer force-fetches the shopping lists on
+> the config page; cached display + manual `POST /api/config/destinations/refresh`, refines DECISION-021)
 
 ---
 
@@ -150,7 +150,7 @@ Auth flow (Reach5 PKCE) — **live-verified end-to-end by the middleware 2026-06
     was implemented as a live *scan* stream. The intent was always **operational logs**; this is being
     corrected — the page is split into the two above (tracked by **[BL-003]** logs + **[BL-004]** history
     in `BACKLOG.md`). Internal journaling only — `contract.md` is unaffected.
-- **Config page = destination checkboxes** (CLARIFY-02 + 03): shows "Panier" (cart) + every shopping list (fetched dynamically via `GET /v1/shopping-lists`), each with a checkbox. A scan feeds every checked destination. Also holds credentials (write-only display) and the HA webhook URL.
+- **Config page = destination checkboxes** (CLARIFY-02 + 03): shows "Panier" (cart) + every shopping list (fetched dynamically via `GET /v1/shopping-lists`), each with a checkbox. A scan feeds every checked destination. Also holds credentials (write-only display) and the HA webhook URL. **In `lazy` mode (BL-007), opening the page does NOT force a login**: if a session is already live the live lists are fetched (free), otherwise the page shows the cached/known lists (`DestinationsResponse.listsIdle: true`) plus a "Recharger les listes depuis Chronodrive" button that triggers the deliberate fetch (`POST /api/config/destinations/refresh`). Keep-alive auto-fetches as before — same session-aware gate as `/health`.
 - **Not-found handling** (CLARIFY-01): log + visible alert in the UI (no manual-link screen in v1).
 - API error page must include: Firefox HAR capture tutorial + ready-to-paste Claude debug prompt (shipped in v1, CLARIFY-06).
 - **Proactive error notification** (CLARIFY-05): on critical API error, call a Home Assistant webhook (URL configured in the UI). Mosquitto/HA confirmed present in the homelab.
@@ -158,7 +158,7 @@ Auth flow (Reach5 PKCE) — **live-verified end-to-end by the middleware 2026-06
 **Implemented in Phase 4 (DECISION-011/012/013):**
 
 - **Stack** — React 19 + Vite, **Mantine** components + **react-router** (`/config`, `/dashboard`, `/history`, `/logs`). Built bundle served by Fastify (`@fastify/static`, SPA history-fallback); in dev, Vite proxies `/api` and `/v1` to the backend.
-- **API surface** (`/api`, same Fastify app as `POST /v1/scan`): `GET/PUT /config`, `GET/PUT /config/destinations`, `PUT/DELETE /credentials`, `GET /scans` (status/search/page/pageSize — BL-004), `GET /scans/stream` (SSE), **`GET /events`** (category filter + pagination) + **`GET /events/stream`** (SSE — BL-003), `GET /health`. Shapes typed in `@barclaudegateway/shared` (`ApiConfig`, `ConfigResponse`, `DestinationsResponse`, `ScansResponse`, `ScanRecord`, `ScanEvent`, `LogEvent`, `EventsResponse`).
+- **API surface** (`/api`, same Fastify app as `POST /v1/scan`): `GET/PUT /config`, `GET/PUT /config/destinations`, **`POST /config/destinations/refresh`** (BL-007 — force the live list fetch on demand), `PUT/DELETE /credentials`, `GET /scans` (status/search/page/pageSize — BL-004), `GET /scans/stream` (SSE), **`GET /events`** (category filter + pagination) + **`GET /events/stream`** (SSE — BL-003), `GET /health` + `POST /health/connect` (BL-006). Shapes typed in `@barclaudegateway/shared` (`ApiConfig`, `ConfigResponse`, `DestinationsResponse` — with `listsIdle` for the lazy cached-only state, BL-007 — `ScansResponse`, `ScanRecord`, `ScanEvent`, `LogEvent`, `EventsResponse`).
 - **Real-time** — **SSE** over in-process buses (DECISION-012). The scan `ScanEventBus` still feeds the Phase-5 error monitor; **the `/logs` page is now operational logs** over a dedicated `EventLogBus` + `event_log` table (auth exchanges + per-step scan detail + token refreshes + system events, live tail, Auth/Scan/Autre/Tous filter, errors shown clearly — **BL-003 shipped 2026-06-27**), and the old live table became a **static, searchable, paginated `Historique des scans`** (**BL-004 shipped 2026-06-27**). See DECISION-018.
 - **Credentials write-only** — `PUT /api/credentials` stores them encrypted; no GET ever returns the password, only `credentials.set`. The `x-api-key`s are not secret and are returned/edited.
 - **Config page edits all static params** including a **new optional `site_id`** store-id override (empty = dynamic `lastVisitedSite.id` detection). It is the editor of the single Phase 3 `enabled_destinations` row — no second source of truth.
@@ -215,7 +215,7 @@ All Phase 0 architecture decisions and functional clarifications are resolved. S
 | End-to-end validation + hardening      | RESOLVED | Deployed smoke/security/resilience proven; central log redaction wired (DECISION-017, v0.0.3); maintenance loop initialized |
 | Operational event-logging + scan history | RESOLVED | Dedicated `EventLog`/`EventLogBus` + `event_log` table, `LogEvent` taxonomy, 50 000-row/10-y retention, SSE tail; scan page split into operational logs + searchable history (DECISION-018, BL-003/004) |
 | "Already in list" as a distinct scan state | RESOLVED | Not built — duplicate list-add is an idempotent `204` (already green `added`); documented (contract.md §5.8) and closed by investigation (DECISION-019, BL-005) |
-| Auth-token policy: lazy vs keep-alive          | RESOLVED | `auth_mode` config key; lazy = on-demand login only + dormant self-test while idle, keep-alive = ~2h refresh + proactive self-test; fresh→lazy, upgraded→keep-alive; manual `POST /api/health/connect` (DECISION-021, BL-006) |
+| Auth-token policy: lazy vs keep-alive          | RESOLVED | `auth_mode` config key; lazy = on-demand login only + dormant self-test while idle, keep-alive = ~2h refresh + proactive self-test; fresh→lazy, upgraded→keep-alive; manual `POST /api/health/connect` (DECISION-021, BL-006). **Refined (BL-007):** lazy also skips the config-page list auto-fetch (session-aware gate + `DestinationsResponse.listsIdle` + manual `POST /api/config/destinations/refresh`) |
 
 ---
 

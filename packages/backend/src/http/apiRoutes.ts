@@ -312,10 +312,10 @@ export const apiRoutes: FastifyPluginAsync<{ deps: ApiDeps }> = (app, opts) => {
   });
 
   // ---- Destinations (the enabled_destinations editor) ---------------------------------------
-  app.get('/config/destinations', async () => {
-    const enabled = deps.destinations.read();
+  // Build the response with a live shopping-list fetch (which forces an on-demand login in lazy mode).
+  const destinationsWithLiveLists = async (): Promise<DestinationsResponse> => {
     const response: DestinationsResponse = {
-      enabled,
+      enabled: deps.destinations.read(),
       available: { cart: { name: 'Panier' }, lists: [] },
     };
     try {
@@ -325,7 +325,26 @@ export const apiRoutes: FastifyPluginAsync<{ deps: ApiDeps }> = (app, opts) => {
       response.listsError = describeError(error);
     }
     return response;
+  };
+
+  // Passive read. In lazy mode (BL-007) do not force a login just to populate the checkboxes: if a
+  // session is already live the fetch is free and runs; otherwise stay dormant and return the
+  // cached/known lists with `listsIdle`, letting the user refresh on demand. Mirrors the /health gate.
+  app.get('/config/destinations', async () => {
+    const lazy = deps.configStore.readAppConfig().authMode === 'lazy';
+    if (lazy && !deps.auth.hasLiveSession()) {
+      return {
+        enabled: deps.destinations.read(),
+        available: { cart: { name: 'Panier' }, lists: [] },
+        listsIdle: true,
+      } satisfies DestinationsResponse;
+    }
+    return destinationsWithLiveLists();
   });
+
+  // User-initiated refresh (BL-007): force the live list fetch (and thus an on-demand login in lazy
+  // mode). Mirrors POST /health/connect. Powers the "Recharger les listes" button on the config page.
+  app.post('/config/destinations/refresh', async () => destinationsWithLiveLists());
 
   app.put('/config/destinations', async (request, reply) => {
     const parsed = parseDestinationsBody(request.body);

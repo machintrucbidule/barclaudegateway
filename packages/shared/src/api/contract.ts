@@ -59,6 +59,12 @@ export interface DestinationsResponse {
   };
   /** Present when the live shopping-list fetch failed (e.g. no credentials configured yet). */
   listsError?: { category: string; message: string };
+  /**
+   * BL-007: `true` when the live list set was deliberately NOT fetched (lazy mode + no live session) —
+   * the cached/known lists are shown and a manual refresh is offered, so opening the config page never
+   * forces a login while idle. Distinct from `listsError`, which signals a real failure.
+   */
+  listsIdle?: boolean;
 }
 
 /**

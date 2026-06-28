@@ -88,6 +88,9 @@ export const api = {
   getDestinations: (): Promise<DestinationsResponse> => getJson('/api/config/destinations'),
   putDestinations: (destinations: EnabledDestinations): Promise<EnabledDestinations> =>
     sendJson('PUT', '/api/config/destinations', destinations),
+  /** BL-007: force the live list fetch on demand (the "Recharger les listes" button). */
+  refreshDestinations: (): Promise<DestinationsResponse> =>
+    sendJson('POST', '/api/config/destinations/refresh'),
 
   putCredentials: (credentials: CredentialsInput): Promise<{ credentials: { set: boolean } }> =>
     sendJson('PUT', '/api/credentials', credentials),

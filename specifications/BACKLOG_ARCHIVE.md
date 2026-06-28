@@ -6,7 +6,56 @@
 >
 > Newest entries on top. Nothing here is active work — the active backlog is [`BACKLOG.md`](./BACKLOG.md).
 >
-> Last updated: 2026-06-28 (BATCH-5 — BL-006 configurable auth-token policy shipped; backlog now empty)
+> Last updated: 2026-06-28 (BATCH-6 — BL-007 lazy mode no longer force-fetches the config-page lists; backlog now empty)
+
+---
+
+## BATCH-6 — Lazy mode: no forced list-fetch on the config page (P2) — shipped 2026-06-28
+
+> Developed via loop prompt 2 on branch `feature/batch-6-lazy-destinations`. Closes the last path that
+> still forced a login in lazy mode: opening the config page. Recorded as a **refinement of
+> DECISION-021**. Middleware + UI change; `contract.md` unchanged.
+
+### [BL-007] Stop the config page from force-fetching the shopping lists in lazy mode
+
+- Type: Bug · Priority: P2 · Batch: BATCH-6 · Source: user remark (2026-06-28)
+- **Date shipped**: 2026-06-28
+- **Approved design decision**: the lazy gate is **session-aware** (user's choice), identical to the
+  BL-006 `/health` gate — a live session fetches for free; only lazy **and** no live session stays
+  dormant.
+- **What was actually done**:
+  - **Shared contract** (`packages/shared/src/api/contract.ts`): `DestinationsResponse` gained
+    **`listsIdle?: boolean`** — `true` when the live list set was deliberately NOT fetched (lazy +
+    no live session), distinct from `listsError` (a real failure).
+  - **Backend** (`packages/backend/src/http/apiRoutes.ts`): the live fetch was factored into a local
+    `destinationsWithLiveLists()` helper. **`GET /config/destinations`** now gates on
+    `authMode === 'lazy' && !deps.auth.hasLiveSession()` → returns the cached/known lists +
+    `listsIdle: true` with **no** Chronodrive call (mirrors the `/health` gate); otherwise it
+    auto-fetches as before. New **`POST /config/destinations/refresh`** forces the live fetch
+    (and thus an on-demand login in lazy mode), mirroring `POST /health/connect`. No new `ApiDeps`
+    wiring — `auth` + `authMode` were already present from BL-006.
+  - **Frontend** (`packages/frontend/src/api/client.ts`, `pages/ConfigPage.tsx`): new
+    `api.refreshDestinations()`; `DestinationsSection` shows a blue "mode économique — listes en cache"
+    note when `listsIdle`, and a **"Recharger les listes depuis Chronodrive"** button (shown on
+    `listsIdle || listsError`) that calls the refresh endpoint and repopulates the live choices
+    **without** resetting the user's in-progress cart/checkbox selection. The existing `mergeLists`
+    path already renders the cached `enabled.lists` when `available.lists` is empty (incl. the empty
+    first-run set). Keep-alive auto-fetches as before.
+  - **Tests** (all green: 172 backend + 20 frontend): backend — lazy + no live session →
+    `GET /config/destinations` returns the saved lists + `listsIdle: true` and makes no call;
+    `POST /config/destinations/refresh` fetches even in lazy; keep-alive GET asserts `listsIdle`
+    absent. Frontend — lazy idle renders the cached list + the refresh button, and clicking it loads
+    the freshly-fetched list.
+  - **Docs/specs**: DECISION-021 refined (`decisions.md`), `PROJECT_CONTEXT.md` (config-page lazy
+    behaviour + API-surface + decision-table row + header). `contract.md` unchanged.
+- **Acceptance criteria — met**:
+  - Lazy: opening the config page makes no Chronodrive call / no login; the saved lists still display;
+    the manual button fetches on demand (only then a login occurs).
+  - Keep-alive: the config page behaves exactly as today (auto-fetch; never idle).
+  - First-time lazy with nothing cached: cart + empty list set + the refresh button (one click fetches
+    the lists to choose from).
+  - Tests cover both modes; DECISION-021 refined; PROJECT_CONTEXT.md updated.
+- **Commit/PR**: branch `feature/batch-6-lazy-destinations` (loop prompt 2, 2026-06-28).
 
 ---
 

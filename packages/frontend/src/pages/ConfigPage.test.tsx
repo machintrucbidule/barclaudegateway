@@ -82,6 +82,56 @@ describe('ConfigPage', () => {
     });
   });
 
+  it('lazy idle: renders cached lists + a refresh button that fetches the live lists (BL-007)', async () => {
+    const idle: DestinationsResponse = {
+      enabled: { cart: false, lists: [{ id: 'L1', name: 'Classiques' }] },
+      available: { cart: { name: 'Panier' }, lists: [] },
+      listsIdle: true,
+    };
+    const refreshed: DestinationsResponse = {
+      enabled: { cart: false, lists: [{ id: 'L1', name: 'Classiques' }] },
+      available: {
+        cart: { name: 'Panier' },
+        lists: [
+          {
+            id: 'L1',
+            name: 'Classiques',
+            nbItems: 3,
+            hasAvailableProduct: true,
+            createdAt: '',
+            updatedAt: '',
+          },
+          {
+            id: 'L2',
+            name: 'Promos',
+            nbItems: 1,
+            hasAvailableProduct: true,
+            createdAt: '',
+            updatedAt: '',
+          },
+        ],
+      },
+    };
+    mockFetch((url) => {
+      if (url.includes('/api/config/destinations/refresh')) return { body: refreshed };
+      if (url.includes('/api/config/destinations')) return { body: idle };
+      if (url.includes('/api/config')) return { body: CONFIG };
+      return { body: {} };
+    });
+    renderWithProviders(<ConfigPage />);
+
+    // The saved list shows from the cache even though the live set was not fetched.
+    expect(await screen.findByLabelText('Classiques')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Promos')).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Recharger les listes depuis Chronodrive' }),
+    );
+
+    // After the manual refresh, the freshly-fetched list appears.
+    expect(await screen.findByLabelText('Promos')).toBeInTheDocument();
+  });
+
   it('credentials are write-only: sends them, clears the field, shows "configurés"', async () => {
     const { calls } = install();
     renderWithProviders(<ConfigPage />);

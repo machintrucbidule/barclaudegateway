@@ -9,9 +9,8 @@
 > [ops/grooming](./prompts/loop-3-ops-grooming.md). Schema and process: [`ROADMAP.md`](./ROADMAP.md) §
 > "Iterative maintenance loop".
 >
-> Last updated: 2026-06-28 (**BATCH-5** [BL-006] shipped — configurable auth-token policy (lazy vs
-> keep-alive); moved to `BACKLOG_ARCHIVE.md`. **No actionable batch remains** — run loop prompt 1 to
-> add new remarks.)
+> Last updated: 2026-06-28 (**BATCH-6** [BL-007] shipped — lazy mode no longer force-fetches the
+> shopping lists on the config page; moved to `BACKLOG_ARCHIVE.md`. The active backlog is now **empty**.)
 
 ---
 
@@ -34,7 +33,8 @@
 
 ---
 
-## (No actionable batch)
+## No active batches
 
-The active backlog is empty. Run [loop prompt 1](./prompts/loop-1-intake-triage.md) to capture and
-triage new remarks into a batch, then [loop prompt 2](./prompts/loop-2-develop-batch.md) to develop it.
+The active backlog is empty — every triaged item has shipped (see
+[`BACKLOG_ARCHIVE.md`](./BACKLOG_ARCHIVE.md)). Run
+[loop prompt 1 (intake/triage)](./prompts/loop-1-intake-triage.md) to add new remarks.

@@ -292,6 +292,48 @@ describe('api routes (fastify.inject)', () => {
     expect(body.available.cart).toEqual({ name: 'Panier' });
     expect(body.available.lists).toHaveLength(1);
     expect(body.available.lists[0].name).toBe('Classiques');
+    // Keep-alive (default harness) auto-fetches as today: never idle (BL-007).
+    expect(body.listsIdle).toBeUndefined();
+  });
+
+  it('GET /api/config/destinations is idle (no fetch) in lazy mode with no live session (BL-007)', async () => {
+    h.credentialStore.save({ email: 'user@example.com', password: SECRET_PASSWORD });
+    h.destinations.write({ cart: true, lists: [{ id: 'L1', name: 'Classiques' }] });
+    h.configStore.set(CONFIG_KEYS.authMode, 'lazy');
+    // No interceptors registered: a live fetch would fail (disableNetConnect) → it must not be attempted.
+    const res = await h.app.inject({ method: 'GET', url: '/api/config/destinations' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.listsIdle).toBe(true);
+    expect(body.listsError).toBeUndefined();
+    // The saved/known lists are still returned for display; the live set was not fetched.
+    expect(body.enabled).toEqual({ cart: true, lists: [{ id: 'L1', name: 'Classiques' }] });
+    expect(body.available.lists).toEqual([]);
+  });
+
+  it('POST /api/config/destinations/refresh forces the live fetch even in lazy mode (BL-007)', async () => {
+    h.credentialStore.save({ email: 'user@example.com', password: SECRET_PASSWORD });
+    h.configStore.set(CONFIG_KEYS.authMode, 'lazy');
+    pool.intercept({ path: pathIs('/v1/shopping-lists'), method: 'GET' }).reply(200, {
+      content: [
+        {
+          id: 'L1',
+          name: 'Classiques',
+          nbItems: 3,
+          hasAvailableProduct: true,
+          createdAt: '',
+          updatedAt: '',
+        },
+      ],
+      page: {},
+    });
+
+    const res = await h.app.inject({ method: 'POST', url: '/api/config/destinations/refresh' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.listsIdle).toBeUndefined();
+    expect(body.available.lists).toHaveLength(1);
+    expect(body.available.lists[0].name).toBe('Classiques');
   });
 
   it('GET /api/config/destinations still renders when the live list fetch fails', async () => {

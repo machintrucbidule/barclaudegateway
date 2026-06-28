@@ -2,7 +2,7 @@
 
 > Decisions are added here as they are resolved. Each entry records: the question, the options considered, the choice made, and who decided.
 > All Phase 0 functional clarifications (CLARIFY-_) and architecture decisions (DECISION-_) are now resolved.
-> Last updated: 2026-06-27 (DECISION-020 — scanner firmware is LED-only + Home-Assistant-integrated, validated on real ESP32 hardware, BATCH-1/BL-001)
+> Last updated: 2026-06-28 (DECISION-021 refined for BL-007/BATCH-6 — lazy mode also suppresses the config-page destinations auto-fetch; session-aware gate + manual `POST /api/config/destinations/refresh`)
 
 ---
 
@@ -613,6 +613,18 @@
   internal lifecycle policy, not a Chronodrive API behaviour.
 - **Shipped in**: BATCH-5 (loop prompt 2, 2026-06-28) on `feature/batch-5-auth-token-policy`. Full
   entry in `BACKLOG_ARCHIVE.md`.
+- **Refinement (2026-06-28, BL-007 — config page must not force a login either)**: BL-006 left one
+  path that still forced a login in lazy mode — opening the **config page** calls
+  `GET /api/config/destinations`, whose handler fetched the live shopping lists unconditionally. The
+  gate is now extended to that route with the **same session-aware rule as `/health`**: in lazy mode,
+  if a session is already live the fetch runs (free); otherwise the route stays dormant, returns the
+  cached/known lists with a new `DestinationsResponse.listsIdle: true`, and a user-initiated
+  **`POST /api/config/destinations/refresh`** (mirroring `POST /api/health/connect`) performs the
+  deliberate fetch — powering a "Recharger les listes depuis Chronodrive" button on the config page.
+  Keep-alive is unchanged (auto-fetch). This **refines, does not reverse**, DECISION-021 (lazy =
+  authenticate only on demand). Scope: middleware + UI only; **`contract.md` UNCHANGED**. Shipped in
+  BATCH-6 (loop prompt 2, 2026-06-28) on `feature/batch-6-lazy-destinations`; full entry in
+  `BACKLOG_ARCHIVE.md`.
 
 ---
 
