@@ -1,7 +1,6 @@
 # BarclaudeGateway Local API ("Layer B") — Contract Specification
 
-**Document version:** 0.4.0 — *spec revision of THIS document only; independent of the app release, which
-is a single user-triggered **0.3.0** (DECISION-027). Not a release number.*
+**Document version:** 0.4.0
 **Spec status:** Draft (foundation + products/search + cart/lists/recipe + price-tracking shipped — epic data surface complete)
 **Last updated:** 2026-06-28 (BATCH-10 / BL-012 — price tracking & HA alerts + a UI page, DECISION-026)
 **Maintainer:** Ivan Calmels
