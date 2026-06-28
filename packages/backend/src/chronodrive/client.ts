@@ -267,48 +267,53 @@ export class ChronodriveClient {
   }
 
   /**
-   * §5.4–5.6 — Apply a SIGNED DELTA to a cart line (`+1` adds, `-1` removes, reaching 0 deletes it).
-   * Never an absolute quantity.
+   * §5.4–5.6 — Apply SIGNED DELTAS to one or more cart lines in a single batch call (`+1` adds, `-1`
+   * removes, reaching 0 deletes the line). Never an absolute quantity. Returns each line's result and
+   * throws if any line is not `SUCCESS`.
    */
+  async updateCartItems(
+    cartId: string,
+    items: Array<{ productId: string; quantity: number }>,
+  ): Promise<CartItemMutationResult[]> {
+    const endpoint = 'POST /carts/{cartId}/items';
+    const res = this.record(
+      endpoint,
+      await this.http.requestJson<CartItemMutationResponse>(this.url(`/carts/${cartId}/items`), {
+        method: 'POST',
+        endpoint,
+        headers: await this.buildHeaders('CART_WRITE', true),
+        body: {
+          content: items.map((item) => ({
+            clientOrigin: CART_CLIENT_ORIGIN,
+            productId: item.productId,
+            quantity: item.quantity,
+          })),
+          optimizedMode: true,
+        },
+      }),
+    );
+    this.check(res, endpoint);
+    const results = res.data.content ?? [];
+    const bad = results.find((r) => r.returnType !== 'SUCCESS');
+    if (results.length === 0 || bad) {
+      throw new SchemaError(
+        `Cart mutation did not return SUCCESS (got ${bad?.returnType ?? 'no result'})`,
+        { status: res.status, endpoint },
+      );
+    }
+    return results;
+  }
+
+  /** §5.4–5.6 — Single-line signed-delta convenience over {@link updateCartItems}. */
   async updateCartItem(args: {
     cartId: string;
     productId: string;
     quantity: number;
   }): Promise<CartItemMutationResult> {
-    const endpoint = 'POST /carts/{cartId}/items';
-    const res = this.record(
-      endpoint,
-      await this.http.requestJson<CartItemMutationResponse>(
-        this.url(`/carts/${args.cartId}/items`),
-        {
-          method: 'POST',
-          endpoint,
-          headers: await this.buildHeaders('CART_WRITE', true),
-          body: {
-            content: [
-              {
-                clientOrigin: CART_CLIENT_ORIGIN,
-                productId: args.productId,
-                quantity: args.quantity,
-              },
-            ],
-            optimizedMode: true,
-          },
-        },
-      ),
-    );
-    this.check(res, endpoint);
-    const result = res.data.content?.[0];
-    if (!result || result.returnType !== 'SUCCESS') {
-      throw new SchemaError(
-        `Cart mutation did not return SUCCESS (got ${result?.returnType ?? 'no result'})`,
-        {
-          status: res.status,
-          endpoint,
-        },
-      );
-    }
-    return result;
+    const [result] = await this.updateCartItems(args.cartId, [
+      { productId: args.productId, quantity: args.quantity },
+    ]);
+    return result as CartItemMutationResult;
   }
 
   // ---- §5.7–5.11 shopping lists ---------------------------------------------------------------

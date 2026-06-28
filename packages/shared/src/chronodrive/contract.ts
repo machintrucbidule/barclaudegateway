@@ -67,6 +67,10 @@ export interface ProductPrices {
   lastPeriodLowestPrice?: number;
   vatRate?: number;
   depositPrice?: number;
+  /** §5.3 cart line: the line total (`defaultPrice × quantity`), present on a populated cart's items. */
+  totalAmount?: number;
+  /** §5.3 cart line: the line's total deposit (consigne). */
+  totalDepositAmount?: number;
 }
 
 /** §5.12 packaging block. `weight`/`unitMeasure` are in `unit` (kg or L). */
@@ -136,18 +140,35 @@ export interface CustomerResponse {
   lastVisitedSite?: { id: number | string };
 }
 
-/** A line in the active cart. */
-export interface CartItem {
-  productId: string;
+/**
+ * A line in the active cart. An empty cart has `items: []`; a populated cart (§5.3 non-empty schema,
+ * 1.5.0) carries the full §5.12 `product` per line (incl. nutrition `features`) plus the per-line
+ * `prices.totalAmount`. `productId`/`quantity` are kept for the lightweight historical shape.
+ */
+export interface CartLineItem {
   quantity: number;
+  wishedQuantity?: number;
+  /** Present on the populated cart schema (the product id is `product.id`). */
+  productId?: string;
+  product?: Product;
+}
+
+/** Cart-level totals (§5.3 `amounts`) — the budget view. All optional. */
+export interface CartAmounts {
+  totalCartAmount?: number;
+  totalOrderAmount?: number;
+  totalCartAmountWithoutDiscount?: number;
+  totalDiscountAmount?: number;
+  totalDepositAmount?: number;
+  totalLoyaltyEarnedAmount?: number;
 }
 
 /** §5.3 — `GET /v1/customers/me/carts`. The active cart is `content[0]` with `isOrdered: false`. */
 export interface ActiveCartResponse {
   content: Array<{
     id: string;
-    items: CartItem[];
-    amounts?: { totalCartAmount?: number; totalOrderAmount?: number };
+    items: CartLineItem[];
+    amounts?: CartAmounts;
     isOrdered: boolean;
   }>;
 }

@@ -6,7 +6,56 @@
 >
 > Newest entries on top. Nothing here is active work — the active backlog is [`BACKLOG.md`](./BACKLOG.md).
 >
-> Last updated: 2026-06-28 (BATCH-8 — BL-010 products & nutrition on the local API, DECISION-024, app v0.4.0)
+> Last updated: 2026-06-28 (BATCH-9 — BL-011 cart & lists on the local API, DECISION-025, app v0.5.0)
+
+---
+
+## BATCH-9 — Cart & lists via the local API (P1) — shipped 2026-06-28
+
+> Developed via loop prompt 2 on branch `feature/batch-7-local-api-foundation` (app **v0.5.0**). The
+> read/write cart + lists surface on the local "Layer B" API, a recipe-fill composite, and a
+> budget+nutrition aggregate (UC1/5/6/9/10 — the rest of the macronome cluster). Recorded as
+> **DECISION-025**. Heavy reuse of the existing cart/list client methods; upstream `contract.md`
+> unchanged; `api/local/contract.md` → v0.3.0.
+
+### [BL-011] Expose cart read/write, lists CRUD, recipe-fill, and a budget/nutrition aggregate
+
+- Type: Evolution · Priority: P1 · Batch: BATCH-9 · Source: user remark (2026-06-28)
+- **Date shipped**: 2026-06-28
+- **Approved design decision (DECISION-025, user's choice)**: write items accept **`id` / `ean` / `name`**
+  ("les 2 doivent être possibles") with a per-item resolution report.
+- **What was actually done**:
+  - **Endpoints** (`http/localApiRoutes.ts`, behind the `X-API-Key` guard): `GET /api/v1/cart`
+    (`NormalizedCart` — lines + totals), `GET /api/v1/cart/nutrition` (budget + summed macros),
+    `POST /api/v1/cart/items` (batch, signed delta), `DELETE /api/v1/cart/items/{id}` (read-then-zero),
+    `GET /api/v1/lists`, `GET /api/v1/lists/{id}` (summary + contents), `POST/DELETE /api/v1/lists/{id}/items`
+    (idempotent add per DECISION-019), `POST /api/v1/recipe-fill` (→ cart or list). A `resolveItemRef`
+    helper resolves `id` (as-is) / `ean` (search) / `name` (first search hit) and every write returns a
+    `resolutions[]` report; unresolved items are reported, not applied.
+  - **Upstream** (`chronodrive/client.ts`): new batch `updateCartItems(cartId, items[])` (one `content[]`
+    POST); the single-item `updateCartItem` now delegates to it. Cart types extended (`CartLineItem` with the
+    full per-line `product`, `CartAmounts`, `ProductPrices.totalAmount`) — additive/optional, scan path
+    untouched. All other cart/list methods (`getActiveCart`, `getShoppingLists`, `getListContents`,
+    `addToList`, `removeFromList`) reused as-is.
+  - **Mapping** (`chronodrive/cartMapper.ts`, pure): `toNormalizedCart` (lines + totals) and
+    `aggregateCartNutrition` (`totalPrice` from `amounts`; macros summed as `per-100g × weightKg × 10 × qty`;
+    `incompleteLines` for a line missing weight/nutrition), reusing `toProductSummary`/`mapNutrition`. New
+    shared DTOs in `api/local.ts` (`NormalizedCart`/`Line`/`CartTotals`, `CartNutritionAggregate`, `ItemRef`,
+    `ItemResolution`, list + recipe-fill shapes).
+  - **No new `LogEventType`**: the local API emits the existing `cart_read`/`list_read`/`recipe_fill`/
+    `cart_write`/`list_write` types under the `chronodrive` category; the inbound request stays `api_local`.
+- **Acceptance criteria — met**: cart read returns items + totals; add/remove mutate the real cart (signed
+  delta); lists CRUD works; recipe-fill resolves a mixed id/ean/name set and adds it in one call; the
+  aggregate returns total € + summed macros (with `incompleteLines`); all exchanges logged as **API
+  Chronodrive** / **API interne**; lazy/keep-alive preserved (every call via `getToken`, no background poll).
+- **Tests** (all green: **224** total — 204 backend + 20 frontend; ~8 new backend): `cartMapper.test.ts`
+  (normalized cart + aggregate with an incomplete line); `chronodrive/client.test.ts` (`updateCartItems`
+  batches); `http/apiRoutes.test.ts` (cart read + nutrition, cart write by id/ean/name + `not_found` report,
+  lists read + add + recipe-fill → cart, key-guard 401, `chronodrive` events). Lint/typecheck/format/build green.
+- **Docs/specs**: `api/local/contract.md` → v0.3.0 (§5.3–§5.9 `IMPLEMENTED` + the `ItemRef` model);
+  `decisions.md` (DECISION-025); `PROJECT_CONTEXT.md`. Root `package.json` **0.4.0 → 0.5.0**. Upstream
+  `contract.md` unchanged.
+- **Commit/PR**: branch `feature/batch-7-local-api-foundation` (loop prompt 2, 2026-06-28).
 
 ---
 

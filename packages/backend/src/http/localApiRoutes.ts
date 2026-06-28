@@ -3,9 +3,10 @@
  *
  * The personal API this gateway *exposes* so other devices/apps (notably the macronome integration) can
  * query Chronodrive through it — distinct from the internal UI API (`/api/*`, {@link apiRoutes}) and the
- * ESP ingestion endpoint (`POST /v1/scan`). BATCH-7 ships only the foundation: a versioned prefix, an
- * `X-API-Key` guard, per-request operational logging, and a `GET /api/v1/ping` health stub. The data
- * endpoints (search, product, cart, lists, recipe-fill, price-tracking) arrive in BATCH-8..10.
+ * ESP ingestion endpoint (`POST /v1/scan`). Foundation (BATCH-7): a versioned prefix, an `X-API-Key`
+ * guard, per-request `api_local` logging, and `GET /api/v1/ping`. Data endpoints: search + product sheet
+ * (BATCH-8); cart read/write, lists CRUD, recipe-fill, budget+nutrition aggregate (BATCH-9). Price-tracking
+ * arrives in BATCH-10. Each upstream call is journalled as a `chronodrive` event.
  *
  * Security: a single shared key (auto-generated + backend-managed, see `bootstrap.ts`) is read fresh from
  * config on every request and compared in constant time to the `X-API-Key` header. Missing/wrong/empty →
@@ -21,9 +22,19 @@ import { Buffer } from 'node:buffer';
 import { timingSafeEqual } from 'node:crypto';
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type {
+  CartWriteResult,
+  ItemRef,
+  ItemResolution,
+  ListSummary,
+  ListWriteResult,
   LocalApiError,
   LocalApiStatus,
+  NormalizedCart,
+  NormalizedCartLine,
+  NormalizedList,
   ProductSearchResponse,
+  RecipeFillRequest,
+  RecipeFillResult,
 } from '@barclaudegateway/shared';
 import { LOCAL_API_KEY_HEADER } from '@barclaudegateway/shared';
 import type { ConfigStore } from '../storage/config.js';
@@ -33,6 +44,7 @@ import type { ChronodriveClient } from '../chronodrive/client.js';
 import { ChronodriveError, NotFoundError } from './errors.js';
 import { validateEan } from '../ingest/ean.js';
 import { toNormalizedProduct, toProductSummary } from '../chronodrive/productMapper.js';
+import { aggregateCartNutrition, toNormalizedCart } from '../chronodrive/cartMapper.js';
 
 export interface LocalApiDeps {
   /** Source of the auto-managed `local_api_key` (read fresh per request so rotation needs no restart). */
@@ -60,6 +72,58 @@ function upstreamFailure(
   });
   const body: LocalApiError = { error: 'upstream Chronodrive error', code: 'upstream_error' };
   return reply.code(502).send(body);
+}
+
+/**
+ * Resolve a write {@link ItemRef} to a Chronodrive product id (BL-011, DECISION-025). Priority
+ * `id` → `ean` → `name`; `id` is trusted as-is, `ean`/`name` resolve via the Products search.
+ */
+async function resolveItemRef(
+  chronodrive: ChronodriveClient,
+  ref: ItemRef,
+): Promise<ItemResolution> {
+  if (typeof ref.id === 'string' && ref.id.length > 0) {
+    return { ref, status: 'resolved', productId: ref.id };
+  }
+  if (typeof ref.ean === 'string' && ref.ean.length > 0) {
+    const p = await chronodrive.getProductByEan(ref.ean);
+    return p
+      ? { ref, status: 'resolved', productId: p.id, matchedName: p.labels?.productLabel }
+      : { ref, status: 'not_found' };
+  }
+  if (typeof ref.name === 'string' && ref.name.trim().length > 0) {
+    const res = await chronodrive.searchProducts(ref.name.trim(), 1, 1);
+    const p = res.content?.[0];
+    return p
+      ? { ref, status: 'resolved', productId: p.id, matchedName: p.labels?.productLabel }
+      : { ref, status: 'not_found' };
+  }
+  return { ref, status: 'not_found' };
+}
+
+/** Validate a `{ items: ItemRef[] }` body into a usable item list, or return a human error. */
+function parseItems(body: unknown): { ok: true; items: ItemRef[] } | { ok: false; error: string } {
+  const items = (body as { items?: unknown } | undefined)?.items;
+  if (!Array.isArray(items) || items.length === 0) {
+    return { ok: false, error: 'items must be a non-empty array' };
+  }
+  for (const it of items) {
+    const ref = it as ItemRef;
+    if (typeof ref !== 'object' || ref === null || (!ref.id && !ref.ean && !ref.name)) {
+      return { ok: false, error: 'each item needs one of id, ean or name' };
+    }
+  }
+  return { ok: true, items: items as ItemRef[] };
+}
+
+function badRequest(reply: FastifyReply, error: string): FastifyReply {
+  const body: LocalApiError = { error, code: 'bad_request' };
+  return reply.code(400).send(body);
+}
+
+function notFound(reply: FastifyReply, error: string): FastifyReply {
+  const body: LocalApiError = { error, code: 'not_found' };
+  return reply.code(404).send(body);
 }
 
 /** Constant-time compare of the stored key against the provided header value. Empty/absent key = locked. */
@@ -184,6 +248,260 @@ export const localApiRoutes: FastifyPluginAsync<{ deps: LocalApiDeps }> = (app, 
         return reply.code(404).send(body);
       }
       return upstreamFailure(reply, deps.emit, 'product_lookup', `product lookup ${eanOrId}`, err);
+    }
+  });
+
+  // ---- BL-011 cart -----------------------------------------------------------------------------
+
+  /** Find the active (non-ordered) cart in a `GET /v1/customers/me/carts` response. */
+  type CartEntry = Awaited<ReturnType<ChronodriveClient['getActiveCart']>>['content'][number];
+  const activeCart = async (): Promise<CartEntry | null> => {
+    const cart = await deps.chronodrive.getActiveCart();
+    return cart.content?.find((c) => !c.isOrdered) ?? cart.content?.[0] ?? null;
+  };
+
+  app.get('/cart', async (_request, reply) => {
+    try {
+      const active = await activeCart();
+      if (!active) return notFound(reply, 'no active cart');
+      deps.emit({
+        category: 'chronodrive',
+        type: 'cart_read',
+        level: 'info',
+        message: 'read cart',
+      });
+      const response: NormalizedCart = toNormalizedCart(active);
+      return response;
+    } catch (err) {
+      return upstreamFailure(reply, deps.emit, 'cart_read', 'read cart', err);
+    }
+  });
+
+  app.get('/cart/nutrition', async (_request, reply) => {
+    try {
+      const active = await activeCart();
+      if (!active) return notFound(reply, 'no active cart');
+      deps.emit({
+        category: 'chronodrive',
+        type: 'cart_read',
+        level: 'info',
+        message: 'aggregate cart nutrition',
+      });
+      return aggregateCartNutrition(active);
+    } catch (err) {
+      return upstreamFailure(reply, deps.emit, 'cart_read', 'aggregate cart', err);
+    }
+  });
+
+  app.post('/cart/items', async (request, reply) => {
+    const parsed = parseItems(request.body);
+    if (!parsed.ok) return badRequest(reply, parsed.error);
+    try {
+      const resolutions = await Promise.all(
+        parsed.items.map((ref) => resolveItemRef(deps.chronodrive, ref)),
+      );
+      const applied: CartWriteResult['applied'] = [];
+      resolutions.forEach((r, idx) => {
+        if (r.status === 'resolved' && r.productId !== undefined) {
+          applied.push({ productId: r.productId, quantity: parsed.items[idx]?.quantity ?? 1 });
+        }
+      });
+      if (applied.length > 0) {
+        const cartId = await deps.chronodrive.getActiveCartId();
+        await deps.chronodrive.updateCartItems(cartId, applied);
+      }
+      deps.emit({
+        category: 'chronodrive',
+        type: 'cart_write',
+        level: 'info',
+        message: `cart write: ${applied.length}/${parsed.items.length} item(s) applied`,
+      });
+      const response: CartWriteResult = { resolutions, applied };
+      return response;
+    } catch (err) {
+      return upstreamFailure(reply, deps.emit, 'cart_write', 'cart write', err);
+    }
+  });
+
+  app.delete('/cart/items/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      const active = await activeCart();
+      if (!active) return notFound(reply, 'no active cart');
+      const line = active.items.find((l) => (l.product?.id ?? l.productId) === id);
+      if (!line) return notFound(reply, 'product not in cart');
+      // Read-then-zero (§5.6 safe removal): a signed delta that brings the line to 0.
+      await deps.chronodrive.updateCartItems(active.id, [
+        { productId: id, quantity: -line.quantity },
+      ]);
+      deps.emit({
+        category: 'chronodrive',
+        type: 'cart_write',
+        level: 'info',
+        message: `cart remove ${id}`,
+      });
+      return { removed: id };
+    } catch (err) {
+      return upstreamFailure(reply, deps.emit, 'cart_write', `cart remove ${id}`, err);
+    }
+  });
+
+  // ---- BL-011 lists ----------------------------------------------------------------------------
+
+  app.get('/lists', async (_request, reply) => {
+    try {
+      const lists = await deps.chronodrive.getShoppingLists();
+      deps.emit({
+        category: 'chronodrive',
+        type: 'list_read',
+        level: 'info',
+        message: 'read lists',
+      });
+      const response: ListSummary[] = lists.map((l) => ({
+        id: l.id,
+        name: l.name,
+        nbItems: l.nbItems,
+        hasAvailableProduct: l.hasAvailableProduct,
+      }));
+      return { lists: response };
+    } catch (err) {
+      return upstreamFailure(reply, deps.emit, 'list_read', 'read lists', err);
+    }
+  });
+
+  app.get('/lists/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      const [list, contents] = await Promise.all([
+        deps.chronodrive.getShoppingList(id),
+        deps.chronodrive.getListContents(id),
+      ]);
+      deps.emit({
+        category: 'chronodrive',
+        type: 'list_read',
+        level: 'info',
+        message: `read list ${id}`,
+      });
+      const items: NormalizedCartLine[] = contents.content.map((c) => ({
+        quantity: c.quantity,
+        product: toProductSummary(c.product),
+      }));
+      const response: NormalizedList = {
+        id: list.id,
+        name: list.name,
+        items,
+        page: {
+          number: contents.page.number,
+          size: contents.page.size,
+          totalElements: contents.page.totalElements,
+          totalPages: contents.page.totalPages,
+          hasNext: contents.page.hasNext,
+        },
+      };
+      return response;
+    } catch (err) {
+      if (err instanceof NotFoundError) return notFound(reply, 'list not found');
+      return upstreamFailure(reply, deps.emit, 'list_read', `read list ${id}`, err);
+    }
+  });
+
+  app.post('/lists/:id/items', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const parsed = parseItems(request.body);
+    if (!parsed.ok) return badRequest(reply, parsed.error);
+    try {
+      const resolutions = await Promise.all(
+        parsed.items.map((ref) => resolveItemRef(deps.chronodrive, ref)),
+      );
+      const applied: string[] = [];
+      const toAdd: Array<{ productId: string; quantity: number }> = [];
+      resolutions.forEach((r, idx) => {
+        if (r.status === 'resolved' && r.productId !== undefined) {
+          applied.push(r.productId);
+          toAdd.push({ productId: r.productId, quantity: parsed.items[idx]?.quantity ?? 1 });
+        }
+      });
+      if (toAdd.length > 0) await deps.chronodrive.addToList(id, toAdd);
+      deps.emit({
+        category: 'chronodrive',
+        type: 'list_write',
+        level: 'info',
+        message: `list ${id} add: ${applied.length}/${parsed.items.length}`,
+      });
+      const response: ListWriteResult = { resolutions, applied };
+      return response;
+    } catch (err) {
+      if (err instanceof NotFoundError) return notFound(reply, 'list not found');
+      return upstreamFailure(reply, deps.emit, 'list_write', `list ${id} add`, err);
+    }
+  });
+
+  app.delete('/lists/:id/items', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const ids = (request.body as { ids?: unknown } | undefined)?.ids;
+    if (!Array.isArray(ids) || ids.length === 0 || !ids.every((x) => typeof x === 'string')) {
+      return badRequest(reply, 'ids must be a non-empty array of product ids');
+    }
+    try {
+      await deps.chronodrive.removeFromList(id, ids as string[]);
+      deps.emit({
+        category: 'chronodrive',
+        type: 'list_write',
+        level: 'info',
+        message: `list ${id} remove: ${ids.length}`,
+      });
+      return { removed: ids };
+    } catch (err) {
+      if (err instanceof NotFoundError) return notFound(reply, 'list not found');
+      return upstreamFailure(reply, deps.emit, 'list_write', `list ${id} remove`, err);
+    }
+  });
+
+  // ---- BL-011 recipe-fill ----------------------------------------------------------------------
+
+  app.post('/recipe-fill', async (request, reply) => {
+    const body = request.body as Partial<RecipeFillRequest> | undefined;
+    const target = body?.target;
+    if (
+      !target ||
+      !(
+        ('cart' in target && target.cart === true) ||
+        ('listId' in target && typeof target.listId === 'string')
+      )
+    ) {
+      return badRequest(reply, 'target must be { cart: true } or { listId }');
+    }
+    const parsed = parseItems(body);
+    if (!parsed.ok) return badRequest(reply, parsed.error);
+    try {
+      const resolutions = await Promise.all(
+        parsed.items.map((ref) => resolveItemRef(deps.chronodrive, ref)),
+      );
+      const resolved: Array<{ productId: string; quantity: number }> = [];
+      resolutions.forEach((r, idx) => {
+        if (r.status === 'resolved' && r.productId !== undefined) {
+          resolved.push({ productId: r.productId, quantity: parsed.items[idx]?.quantity ?? 1 });
+        }
+      });
+      if (resolved.length > 0) {
+        if ('cart' in target) {
+          const cartId = await deps.chronodrive.getActiveCartId();
+          await deps.chronodrive.updateCartItems(cartId, resolved);
+        } else {
+          await deps.chronodrive.addToList(target.listId, resolved);
+        }
+      }
+      deps.emit({
+        category: 'chronodrive',
+        type: 'recipe_fill',
+        level: 'info',
+        message: `recipe-fill → ${'cart' in target ? 'cart' : `list ${target.listId}`}: ${resolved.length}/${parsed.items.length}`,
+      });
+      const response: RecipeFillResult = { target, resolutions, added: resolved.length };
+      return response;
+    } catch (err) {
+      if (err instanceof NotFoundError) return notFound(reply, 'list not found');
+      return upstreamFailure(reply, deps.emit, 'recipe_fill', 'recipe-fill', err);
     }
   });
 

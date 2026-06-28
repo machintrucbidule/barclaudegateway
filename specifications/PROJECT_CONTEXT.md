@@ -1,10 +1,11 @@
 # BarclaudeGateway — Project Context
 
 > **This file is read at the start of every development step.** Keep it up to date.
-> Last updated: 2026-06-28 (**BATCH-8 shipped — DECISION-024, app v0.4.0**: products & nutrition on the
-> local API — `GET /api/v1/search?q=` and `GET /api/v1/products/{eanOrId}` returning normalized DTOs with
-> mapped nutrition/weight/price/images, backed by a new Products `x-api-key` (BL-010). `api/local/contract.md`
-> → v0.2.0. Next top batch: **BATCH-9** (cart & lists). Previously: BATCH-7 foundation (DECISION-023, v0.3.0);
+> Last updated: 2026-06-28 (**BATCH-9 shipped — DECISION-025, app v0.5.0**: cart & lists on the local API —
+> `GET /api/v1/cart` + `/cart/nutrition` (budget+macros aggregate), `POST/DELETE /cart/items`, `GET /lists`
+> + `/lists/{id}`, `POST/DELETE /lists/{id}/items`, `POST /recipe-fill`; `ItemRef` id/ean/name write model
+> with a per-item resolution report (BL-011). `api/local/contract.md` → v0.3.0. Next top batch: **BATCH-10**
+> (in-gateway price tracking & alerts). Previously: BATCH-8 products & nutrition (DECISION-024, v0.4.0);
 > `contract.md` at **1.5.0**.)
 
 ---
@@ -47,10 +48,13 @@ barclaudegateway/
 > workflow (`.github/workflows/release.yml`, tag-triggered) + a no-push PR build check
 > (`docker-build.yml`), the Portainer stack (`deploy/stack.yml`), and `docs/deployment.md`
 > (Phase 6, DECISION-015). Docker is still never built or tested on Windows — only CI builds it.
-> The version started at **0.0.1**; **current version is `0.4.0`** — it ships **BATCH-8** (BL-010: products
-> & nutrition on the local API — `GET /api/v1/search?q=` + `GET /api/v1/products/{eanOrId}` returning
-> normalized DTOs with mapped nutrition/weight/price/images, a new Products `x-api-key`, and a §5.12.1
-> nutrition mapper; DECISION-024). `0.3.0` shipped **BATCH-7** (BL-008 local "Layer B" API foundation:
+> The version started at **0.0.1**; **current version is `0.5.0`** — it ships **BATCH-9** (BL-011: cart &
+> lists on the local API — `GET /cart` + `/cart/nutrition`, `POST/DELETE /cart/items`, `GET /lists` +
+> `/lists/{id}`, `POST/DELETE /lists/{id}/items`, `POST /recipe-fill`; `ItemRef` id/ean/name write model +
+> per-item resolution report; batch cart write + cart mapper/aggregate; DECISION-025). `0.4.0` shipped
+> **BATCH-8** (BL-010: products & nutrition — `GET /api/v1/search?q=` + `GET /api/v1/products/{eanOrId}`
+> with mapped nutrition/weight/price/images, a new Products `x-api-key`, §5.12.1 mapper; DECISION-024).
+> `0.3.0` shipped **BATCH-7** (BL-008 local "Layer B" API foundation:
 > `/api/v1` prefix + app-managed `X-API-Key` guard + `GET /api/v1/ping` stub + new `api/local/contract.md`;
 > BL-009 logging taxonomy split into API Chronodrive vs API interne; DECISION-023). `0.2.2` shipped
 > **BATCH-6** (BL-007: lazy mode no longer force-fetches the shopping lists
@@ -162,8 +166,16 @@ notably **macronome** — can query Chronodrive through it (products, nutrition,
   `nutrition`, `weightKg`, `price`, absolute image URLs). EAN-vs-id is disambiguated with `validateEan`;
   the §5.12.1 nutrition mapper + image-URL builder live in `chronodrive/productMapper.ts`. Backed by a new
   **Products `x-api-key`** (`apiKeys.products`, seed `34bfe4e1…`, editable in the config page). Each
-  upstream call is journalled as `chronodrive`; not-found → 404, upstream failure → 502. Cart, lists,
-  recipe-fill and price-tracking remain `PLANNED` (BATCH-9..10).
+  upstream call is journalled as `chronodrive`; not-found → 404, upstream failure → 502.
+- **Cart & lists shipped (BATCH-9, BL-011, DECISION-025):** **`GET /api/v1/cart`** (normalized line items +
+  totals) and **`GET /api/v1/cart/nutrition`** (budget + summed macros, per-100g × weight × qty, flagging
+  `incompleteLines`); **`POST/DELETE /api/v1/cart/items`**, **`GET /api/v1/lists`** + **`/lists/{id}`**,
+  **`POST/DELETE /api/v1/lists/{id}/items`**, and **`POST /api/v1/recipe-fill`** (fill the cart or a list).
+  Writes take an **`ItemRef`** (`id` / `ean` / `name`, priority in that order; `ean`/`name` resolve via
+  search) and return a per-item **resolution report**. A single cart read yields lines + the aggregate (the
+  §5.3 line carries the full product). Mapping in `chronodrive/cartMapper.ts`; a batch `updateCartItems`
+  client method (the single-item `updateCartItem` delegates to it). **Price-tracking** is the last
+  `PLANNED` piece (BATCH-10).
 - **The local API key is auto-generated and app-managed** (DECISION-023, user's choice): generated on
   first boot when empty (`bootstrap.ensureLocalApiKey`), persisted as the `local_api_key` config row,
   surfaced **once** (a `local_api_key_generated` log event carrying the key + a stdout line) for retrieval.
@@ -266,6 +278,7 @@ All Phase 0 architecture decisions and functional clarifications are resolved. S
 | Scope expansion: local Chronodrive query API ("Layer B") | TRIAGED | All 10 use cases; new local API w/ own contract + `X-API-Key`; in-gateway price tracking; essential nutrition-code map; logs identify Chronodrive vs internal exchanges. `contract.md`→1.5.0. Staged BATCH-7..11 (DECISION-022). **BATCH-7 shipped → DECISION-023.** |
 | Local API foundation + logging taxonomy (BATCH-7) | RESOLVED | `/api/v1` prefix; encapsulated `X-API-Key` guard; **auto-generated, app-managed key** (not in `ApiConfig`, not config-editable); `chronodrive`/`api_local` log split; `api/local/contract.md` v0.1.0; `GET /api/v1/ping` stub (DECISION-023, BL-008/009, v0.3.0) |
 | Products & nutrition on the local API (BATCH-8) | RESOLVED | `GET /api/v1/search` + `GET /api/v1/products/{eanOrId}` → normalized DTOs; Products `x-api-key`; §5.12.1 nutrition mapper + image-URL builder; EAN-vs-id via `validateEan`; `api/local/contract.md` v0.2.0 (DECISION-024, BL-010, v0.4.0) |
+| Cart & lists on the local API (BATCH-9) | RESOLVED | `GET /cart` + `/cart/nutrition` aggregate, `POST/DELETE /cart/items`, `GET /lists` + `/lists/{id}`, `POST/DELETE /lists/{id}/items`, `POST /recipe-fill`; `ItemRef` id/ean/name + resolution report; batch cart write; cart mapper/aggregate; `api/local/contract.md` v0.3.0 (DECISION-025, BL-011, v0.5.0) |
 
 ---
 

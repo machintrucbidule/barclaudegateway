@@ -587,6 +587,191 @@ describe('api routes (fastify.inject)', () => {
     expect(['product_search', 'product_lookup']).toContain(cd.events[0].type);
   });
 
+  it('local API: cart read + nutrition aggregate (BL-011)', async () => {
+    h.configStore.set(CONFIG_KEYS.localApiKey, 'LK');
+    const CART = {
+      content: [
+        {
+          id: 'CART-1',
+          isOrdered: false,
+          amounts: { totalCartAmount: 3.58, totalOrderAmount: 3.58 },
+          items: [
+            {
+              quantity: 2,
+              product: {
+                id: '91574',
+                labels: { productLabel: 'Mozzarella' },
+                eans: ['3596710335510'],
+                prices: { defaultPrice: 1.79, totalAmount: 3.58 },
+                packaging: { weight: 0.125 },
+                characteristics: {
+                  features: [
+                    { code: '243', value: '262' },
+                    { code: '168', value: '13' },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+    pool.intercept({ path: pathIs('/v1/customers/me/carts'), method: 'GET' }).reply(200, CART);
+    pool.intercept({ path: pathIs('/v1/customers/me/carts'), method: 'GET' }).reply(200, CART);
+
+    const cart = await h.app.inject({
+      method: 'GET',
+      url: '/api/v1/cart',
+      headers: { 'x-api-key': 'LK' },
+    });
+    expect(cart.statusCode).toBe(200);
+    expect(cart.json().id).toBe('CART-1');
+    expect(cart.json().items[0]).toMatchObject({ quantity: 2, lineTotal: 3.58 });
+
+    const nut = await h.app.inject({
+      method: 'GET',
+      url: '/api/v1/cart/nutrition',
+      headers: { 'x-api-key': 'LK' },
+    });
+    expect(nut.statusCode).toBe(200);
+    expect(nut.json().totalPrice).toBe(3.58);
+    expect(nut.json().nutrition.energyKcal).toBe(655); // 262 × (0.125×10) × 2
+  });
+
+  it('local API: cart write resolves id / ean / name + reports not_found (BL-011)', async () => {
+    h.configStore.set(CONFIG_KEYS.localApiKey, 'LK');
+    // searchTerm-aware product search (ean + name resolution).
+    pool
+      .intercept({ path: pathIs('/v1/products'), method: 'GET' })
+      .reply(200, (opts) => {
+        const term = new URL(`http://x${opts.path}`).searchParams.get('searchTerm');
+        const page = { size: 1, totalElements: 1, totalPages: 1, number: 1, hasNext: false };
+        if (term === '3596710335510')
+          return { page, content: [{ id: '222', labels: {}, eans: [] }] };
+        if (term === 'mozzarella') return { page, content: [{ id: '333', labels: {}, eans: [] }] };
+        return { page: { ...page, totalElements: 0 }, content: [] };
+      })
+      .persist();
+    pool
+      .intercept({ path: pathIs('/v1/customers/me/carts'), method: 'GET' })
+      .reply(200, { content: [{ id: 'CART-1', isOrdered: false, items: [], amounts: {} }] })
+      .persist();
+    let postBody: { content: Array<{ productId: string; quantity: number }> } = { content: [] };
+    pool
+      .intercept({ path: '/v1/carts/CART-1/items', method: 'POST' })
+      .reply(200, (opts) => {
+        postBody = JSON.parse(opts.body as string);
+        return {
+          content: postBody.content.map((c) => ({ ...c, returnType: 'SUCCESS' })),
+        };
+      })
+      .persist();
+
+    const res = await h.app.inject({
+      method: 'POST',
+      url: '/api/v1/cart/items',
+      headers: { 'x-api-key': 'LK' },
+      payload: {
+        items: [
+          { id: '111', quantity: 2 },
+          { ean: '3596710335510' },
+          { name: 'mozzarella' },
+          { name: 'zzz-nope' },
+        ],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.applied).toHaveLength(3); // id + ean + name resolved
+    expect(body.resolutions.map((r: { status: string }) => r.status)).toEqual([
+      'resolved',
+      'resolved',
+      'resolved',
+      'not_found',
+    ]);
+    expect(postBody.content[0]).toMatchObject({ productId: '111', quantity: 2 });
+  });
+
+  it('local API: lists read + add + recipe-fill to cart (BL-011)', async () => {
+    h.configStore.set(CONFIG_KEYS.localApiKey, 'LK');
+    pool.intercept({ path: pathIs('/v1/shopping-lists'), method: 'GET' }).reply(200, {
+      content: [
+        {
+          id: 'L1',
+          name: 'Classiques',
+          nbItems: 2,
+          hasAvailableProduct: true,
+          createdAt: '',
+          updatedAt: '',
+        },
+      ],
+      page: {
+        size: 1,
+        totalElements: 1,
+        totalPages: 1,
+        number: 1,
+        hasNext: false,
+        hasPrevious: false,
+        isEmpty: false,
+      },
+    });
+    pool.intercept({ path: '/v1/shopping-lists/L1', method: 'PATCH' }).reply(204, '').persist();
+    pool
+      .intercept({ path: pathIs('/v1/products'), method: 'GET' })
+      .reply(200, {
+        page: { size: 1, totalElements: 1, totalPages: 1, number: 1, hasNext: false },
+        content: [{ id: '777', labels: { productLabel: 'Lait' }, eans: [] }],
+      })
+      .persist();
+    pool
+      .intercept({ path: pathIs('/v1/customers/me/carts'), method: 'GET' })
+      .reply(200, { content: [{ id: 'CART-1', isOrdered: false, items: [], amounts: {} }] })
+      .persist();
+    pool
+      .intercept({ path: '/v1/carts/CART-1/items', method: 'POST' })
+      .reply(200, { content: [{ productId: '777', quantity: 1, returnType: 'SUCCESS' }] })
+      .persist();
+
+    const lists = await h.app.inject({
+      method: 'GET',
+      url: '/api/v1/lists',
+      headers: { 'x-api-key': 'LK' },
+    });
+    expect(lists.statusCode).toBe(200);
+    expect(lists.json().lists[0]).toMatchObject({ id: 'L1', name: 'Classiques' });
+
+    const addToList = await h.app.inject({
+      method: 'POST',
+      url: '/api/v1/lists/L1/items',
+      headers: { 'x-api-key': 'LK' },
+      payload: { items: [{ name: 'lait' }] },
+    });
+    expect(addToList.statusCode).toBe(200);
+    expect(addToList.json().applied).toEqual(['777']);
+
+    const recipe = await h.app.inject({
+      method: 'POST',
+      url: '/api/v1/recipe-fill',
+      headers: { 'x-api-key': 'LK' },
+      payload: { target: { cart: true }, items: [{ id: '777', quantity: 2 }, { name: 'lait' }] },
+    });
+    expect(recipe.statusCode).toBe(200);
+    expect(recipe.json().added).toBe(2);
+
+    // The cart/list exchanges are journalled as `chronodrive`.
+    const cd = (
+      await h.app.inject({ method: 'GET', url: '/api/events?category=chronodrive' })
+    ).json();
+    expect(cd.events.some((e: { type: string }) => e.type === 'recipe_fill')).toBe(true);
+  });
+
+  it('local API: cart endpoints stay key-guarded (BL-011)', async () => {
+    expect((await h.app.inject({ method: 'GET', url: '/api/v1/cart' })).statusCode).toBe(401);
+    expect(
+      (await h.app.inject({ method: 'POST', url: '/api/v1/cart/items', payload: {} })).statusCode,
+    ).toBe(401);
+  });
+
   it('PUT /api/config journals a config_change event (BL-003)', async () => {
     await h.app.inject({ method: 'PUT', url: '/api/config', payload: CONFIG });
     const events = h.eventLog.query({ page: 1, pageSize: 50 });

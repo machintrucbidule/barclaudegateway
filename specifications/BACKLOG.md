@@ -9,9 +9,9 @@
 > [ops/grooming](./prompts/loop-3-ops-grooming.md). Schema and process: [`ROADMAP.md`](./ROADMAP.md) §
 > "Iterative maintenance loop".
 >
-> Last updated: 2026-06-28 (**BATCH-8 shipped** — BL-010 products & nutrition on the local API,
-> DECISION-024, app v0.4.0; moved to `BACKLOG_ARCHIVE.md`. The new top batch is **BATCH-9** (cart &
-> lists) — develop it via loop prompt 2.)
+> Last updated: 2026-06-28 (**BATCH-9 shipped** — BL-011 cart & lists on the local API, DECISION-025,
+> app v0.5.0; moved to `BACKLOG_ARCHIVE.md`. The new top batch is **BATCH-10** (in-gateway price tracking
+> & alerts) — develop it via loop prompt 2.)
 
 ---
 
@@ -38,8 +38,8 @@
 
 > Widen the gateway into a **local personal API** (its own "Layer B" contract) querying Chronodrive
 > (product, nutrition, price, cart, lists), enabling the macronome integration. Upstream knowledge is
-> already captured in `contract.md` v1.5.0 (HAR 2026-06-28). Batches are priority-ordered; **BATCH-9 is
-> the next to develop** (BATCH-7/8 shipped — see `BACKLOG_ARCHIVE.md`). Develop one batch per loop-2 run.
+> already captured in `contract.md` v1.5.0 (HAR 2026-06-28). Batches are priority-ordered; **BATCH-10 is
+> the next to develop** (BATCH-7/8/9 shipped — see `BACKLOG_ARCHIVE.md`). Develop one batch per loop-2 run.
 >
 > **Cross-cutting acceptance (every batch in this epic):** each new exchange — both an **upstream
 > Chronodrive** client call and an **inbound local-API** request served — emits a `LogEvent` that is
@@ -51,39 +51,7 @@
 
 ---
 
-## BATCH-9 — Cart & lists via the local API (P1) — top batch, next to develop
-
-### [BL-011] Expose cart read/write, lists CRUD, recipe-fill, and a budget/nutrition aggregate
-
-- Type: Evolution
-- Priority: P1
-- Status: Batched
-- Source: user remark (2026-06-28)
-- Spec impact: api/local/contract.md; reuses contract.md §5.3/§5.3b/§5.4-5.6/§5.7-5.11
-- Affected files / areas: `packages/backend/src/chronodrive/` (cart read incl. non-empty schema + the
-  existing add/remove + lists), `packages/backend/src/http/` (local routes), `packages/shared/src/api/`
-- Description: serves UC1/5/6/9/10 — read the current cart, push items (by EAN or id, batched), manage
-  lists from any device, fill a cart/list from a recipe's ingredient list, and aggregate budget +
-  nutrition for the cart.
-- Change to make:
-  - `GET /api/v1/cart` → normalized cart (line items with product summary + line totals + cart totals
-    from §5.3 `amounts`).
-  - `POST /api/v1/cart/items` (batch; each item by EAN or id, signed delta per §5.4-5.6),
-    `DELETE /api/v1/cart/items/{id}`.
-  - `GET /api/v1/lists`, `GET /api/v1/lists/{id}`, `POST|DELETE /api/v1/lists/{id}/items` (idempotent
-    add per §5.8/DECISION-019).
-  - `POST /api/v1/recipe-fill` → resolve a list of EANs/names (via §5.13/§5.14) into cart/list adds in
-    one call.
-  - `GET /api/v1/cart/nutrition` (or enrich `/cart`) → sum price + nutrition across the cart (UC10).
-- Acceptance criteria: cart read returns items + totals; add/remove mutate the real cart (signed delta);
-  lists CRUD works; recipe-fill resolves and adds a multi-item set; the aggregate returns total € +
-  summed macros; all exchanges logged + categorized; `auth_mode` lazy still only logs in on demand.
-- Batch: BATCH-9
-- Dependencies: BL-008, BL-009, BL-010
-
----
-
-## BATCH-10 — In-gateway price tracking & alerts (P2)
+## BATCH-10 — In-gateway price tracking & alerts (P2) — top batch, next to develop
 
 ### [BL-012] Price-history store, per-product thresholds, scheduler, and HA webhook alert
 

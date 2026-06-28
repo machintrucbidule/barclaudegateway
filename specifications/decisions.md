@@ -2,7 +2,7 @@
 
 > Decisions are added here as they are resolved. Each entry records: the question, the options considered, the choice made, and who decided.
 > All Phase 0 functional clarifications (CLARIFY-_) and architecture decisions (DECISION-_) are now resolved.
-> Last updated: 2026-06-28 (DECISION-024 — BATCH-8 products & nutrition on the local API: Products `x-api-key`, normalized DTOs, §5.12.1 nutrition mapper, BL-010; app v0.4.0)
+> Last updated: 2026-06-28 (DECISION-025 — BATCH-9 cart & lists on the local API: cart read/write, lists CRUD, recipe-fill, budget+nutrition aggregate, id/ean/name resolution, BL-011; app v0.5.0)
 
 ---
 
@@ -759,6 +759,44 @@
   for both lookup styles. Upstream `contract.md` UNCHANGED (it already documents these at 1.5.0).
 - **Shipped in**: BATCH-8 (loop prompt 2, 2026-06-28) on `feature/batch-7-local-api-foundation`, app
   version **0.4.0**; `api/local/contract.md` → v0.2.0. Full entry in `BACKLOG_ARCHIVE.md`.
+
+---
+
+### [DECISION-025] Cart & lists on the local API (BATCH-9 / BL-011)
+
+- **Date**: 2026-06-28
+- **Question**: expose the read/write **cart**, **lists CRUD**, a **recipe-fill** composite, and a
+  **budget+nutrition aggregate** on `/api/v1` (UC1/5/6/9/10), mapping the upstream cart/list surface
+  (contract.md §5.3/§5.4-5.6/§5.7-5.11, all CONFIRMED at 1.5.0) into the local contract.
+- **Decisions** (build choices under DECISION-022; the item-resolution model chosen explicitly by the user):
+  - **Write-item reference = `id` / `ean` / `name`, all accepted** (user: *"les 2 doivent être possibles"*).
+    An `ItemRef` provides one of them (priority `id` → `ean` → `name`); `id` is trusted as-is, `ean`/`name`
+    resolve via the §5.1 Products search (`name` → first hit). Every write returns a per-item
+    **`resolutions[]`** report (`resolved`+`productId`+`matchedName`, or `not_found`); an unresolved item is
+    reported and **not** applied — the safety net for the fuzzy `name` path.
+  - **One-call cart read + aggregate**: the §5.3 non-empty cart carries each line's full product sheet (incl.
+    nutrition `features`), the per-line total, and cart-level `amounts`, so `GET /cart` and
+    `GET /cart/nutrition` are both built from a single upstream call — no per-product fetch.
+  - **Budget+nutrition aggregate formula** (UC10): `totalPrice` = the authoritative cart total; macros summed
+    as **per-100g × (weightKg × 10) × quantity**; a line missing net weight or any declared macro is counted
+    in `incompleteLines` and excluded from the macro sum (still counted toward the price).
+  - **Cart delete = read-then-zero** (§5.6 safe removal): read the cart, find the line, post the signed delta
+    that brings it to 0 (rather than the untested `-999` flooring).
+  - **Batch cart write**: a new `updateCartItems(cartId, items[])` posts all lines in one `content[]` call
+    (the existing single-item `updateCartItem` now delegates to it); `recipe-fill` reuses it (cart target) or
+    `addToList` (list target, idempotent per DECISION-019).
+  - **No new `LogEventType`**: the local API emits the existing `cart_read`/`list_read`/`recipe_fill`/
+    `cart_write`/`list_write` types under the **`chronodrive`** category; the inbound request stays the
+    `api_local` line (BATCH-7 hook). Errors map to `404 not_found` / `502 upstream_error` (BATCH-8 helper).
+- **Decided by**: User (Ivan) — the id/ean/name resolution model chosen explicitly; the aggregate formula,
+  read-then-zero delete, batch write and recipe-fill target presented and approved in the plan.
+- **Rationale**: a normalized cart/list contract shields macronome from the raw Chronodrive shape; accepting
+  id/ean/name (with a resolution report) makes recipe-fill usable from a textual ingredient list while
+  staying deterministic when the caller already has an id/EAN; the single-call read keeps the budget view
+  cheap; read-then-zero is the contract's documented safe removal. Upstream `contract.md` UNCHANGED. Preserves
+  DECISION-021 lazy/keep-alive (every client call goes through `getToken`; no background polling added).
+- **Shipped in**: BATCH-9 (loop prompt 2, 2026-06-28) on `feature/batch-7-local-api-foundation`, app version
+  **0.5.0**; `api/local/contract.md` → v0.3.0. Full entry in `BACKLOG_ARCHIVE.md`.
 
 ---
 

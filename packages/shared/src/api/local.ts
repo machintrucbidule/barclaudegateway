@@ -134,3 +134,118 @@ export interface ProductSearchResponse {
   products: ProductSummary[];
   page: ProductSearchPage;
 }
+
+// ---------------------------------------------------------------------------------------------
+// BATCH-9 (BL-011) — cart, lists, recipe-fill (UC1/5/6/9/10)
+// ---------------------------------------------------------------------------------------------
+
+/** One line of the normalized cart or list: a quantity + the product summary + the line total. */
+export interface NormalizedCartLine {
+  quantity: number;
+  product: ProductSummary;
+  /** Line total in € (`defaultPrice × quantity`), when upstream provided it. */
+  lineTotal?: number;
+}
+
+/** Cart-level totals (the budget view), projected from upstream §5.3 `amounts`. */
+export interface CartTotals {
+  cartAmount?: number;
+  orderAmount?: number;
+  discountAmount?: number;
+  depositAmount?: number;
+  loyaltyEarned?: number;
+}
+
+/** `GET /api/v1/cart` — the current cart: line items + totals. */
+export interface NormalizedCart {
+  id: string;
+  items: NormalizedCartLine[];
+  totals: CartTotals;
+}
+
+/**
+ * `GET /api/v1/cart/nutrition` — the budget + nutrition aggregate (UC10). `totalPrice` is the cart total
+ * (authoritative, from `amounts`); the `nutrition` macros are summed across lines as
+ * `per-100g × (weightKg × 10) × quantity`. A line missing weight **or** nutrition is counted in
+ * `incompleteLines` and excluded from the macro sum (still counted toward the price).
+ */
+export interface CartNutritionAggregate {
+  totalPrice?: number;
+  lineCount: number;
+  /** Lines that could not contribute macros (no net weight or no declared nutrition). */
+  incompleteLines: number;
+  nutrition: ProductNutrition;
+}
+
+/**
+ * How a write designates a product (BL-011, DECISION-025). Provide exactly one of `id` / `ean` / `name`
+ * (priority `id` → `ean` → `name`); a `name` resolves to the first `/search` hit. `quantity` is a signed
+ * delta for the cart (default `+1`); for a list it is the desired quantity.
+ */
+export interface ItemRef {
+  id?: string;
+  ean?: string;
+  name?: string;
+  quantity?: number;
+}
+
+/** Per-item outcome of resolving an {@link ItemRef} to a Chronodrive product id. */
+export interface ItemResolution {
+  ref: ItemRef;
+  status: 'resolved' | 'not_found';
+  productId?: string;
+  /** The matched product label (helps the caller confirm a fuzzy `name` match). */
+  matchedName?: string;
+}
+
+/** `POST /api/v1/cart/items` / `POST /api/v1/lists/{id}/items` body. */
+export interface ItemsRequest {
+  items: ItemRef[];
+}
+
+/** `DELETE /api/v1/lists/{id}/items` body — product ids to remove. */
+export interface ListItemsDeleteRequest {
+  ids: string[];
+}
+
+/** `POST /api/v1/cart/items` response: what resolved + the deltas applied. */
+export interface CartWriteResult {
+  resolutions: ItemResolution[];
+  applied: Array<{ productId: string; quantity: number }>;
+}
+
+/** `POST|DELETE /api/v1/lists/{id}/items` response. */
+export interface ListWriteResult {
+  resolutions: ItemResolution[];
+  applied: string[];
+}
+
+/** A shopping-list summary as exposed by `GET /api/v1/lists` (mirrors upstream `ShoppingList`). */
+export interface ListSummary {
+  id: string;
+  name: string;
+  nbItems: number;
+  hasAvailableProduct: boolean;
+}
+
+/** `GET /api/v1/lists/{id}` — a list with its (first page of) contents. */
+export interface NormalizedList {
+  id: string;
+  name: string;
+  items: NormalizedCartLine[];
+  page: ProductSearchPage;
+}
+
+/** `POST /api/v1/recipe-fill` body: resolve a set of items into either the cart or a named list. */
+export interface RecipeFillRequest {
+  target: { cart: true } | { listId: string };
+  items: ItemRef[];
+}
+
+/** `POST /api/v1/recipe-fill` response. */
+export interface RecipeFillResult {
+  target: { cart: true } | { listId: string };
+  resolutions: ItemResolution[];
+  /** Count of items actually pushed to the target. */
+  added: number;
+}

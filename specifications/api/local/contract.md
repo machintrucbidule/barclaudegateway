@@ -1,8 +1,8 @@
 # BarclaudeGateway Local API ("Layer B") — Contract Specification
 
-**Document version:** 0.2.0
-**Spec status:** Draft (foundation + products/search shipped; cart/lists/price-tracking planned)
-**Last updated:** 2026-06-28 (BATCH-8 / BL-010 — search + product sheet, DECISION-024)
+**Document version:** 0.3.0
+**Spec status:** Draft (foundation + products/search + cart/lists/recipe shipped; price-tracking planned)
+**Last updated:** 2026-06-28 (BATCH-9 / BL-011 — cart, lists, recipe-fill, budget+nutrition aggregate, DECISION-025)
 **Maintainer:** Ivan Calmels
 
 ---
@@ -157,39 +157,56 @@ GET /api/v1/products/3596710335510
   }
 ```
 
-> The endpoints below are **`PLANNED`** — specified now so this contract is the single design target;
-> the handlers are added per batch. Shapes are normalized DTOs (defined in `@barclaudegateway/shared`),
-> built from the upstream sections cited in parentheses.
+#### Write-item reference & resolution (`ItemRef`)
 
-### §5.3 `GET /api/v1/cart` — read cart · `PLANNED` (BATCH-9)
+The cart/list writes and recipe-fill take **`ItemRef`** items — provide one of `id` (Chronodrive product
+id, trusted as-is), `ean` (resolved via §5.1 search), or `name` (free text → the **first** §5.1 hit), plus
+an optional `quantity` (signed delta for the cart, default `+1`; desired quantity for a list). Every write
+returns a per-item **`resolutions[]`** report (`{ status: 'resolved' | 'not_found'; productId?; matchedName? }`)
+so a caller sees exactly what each `ean`/`name` matched — the safety net for the fuzzy `name` path. An
+unresolved item is reported and **not** applied.
 
-Normalized cart: line items (product summary + line totals) + cart totals (upstream `amounts`, chronodrive
-§5.3/§5.3b).
+### §5.3 `GET /api/v1/cart` — read cart · `IMPLEMENTED` (BATCH-9)
 
-### §5.4 `POST /api/v1/cart/items` — add/update cart (batch) · `PLANNED` (BATCH-9)
+The active cart (upstream §5.3, `content[0]` with `isOrdered:false`): `id`, `items[]`
+(`NormalizedCartLine` = `{ quantity, product: ProductSummary, lineTotal? }`), and `totals` (`cartAmount`,
+`orderAmount`, `discountAmount`, `depositAmount`, `loyaltyEarned`, from upstream `amounts`). One call
+yields everything (the upstream line carries the full product). No active cart → `404 not_found`.
 
-Body: a list of items, each by EAN or id with a **signed delta** quantity (chronodrive §5.4–5.6; `+1`
-adds, `-1` removes, `0`/removal empties). Out-of-stock/ineligible items follow the scan rule (lists-only
-semantics are a scan concern; here the caller controls the cart explicitly).
+### §5.4 `POST /api/v1/cart/items` — add/update cart (batch) · `IMPLEMENTED` (BATCH-9)
 
-### §5.5 `DELETE /api/v1/cart/items/{id}` — remove a cart line · `PLANNED` (BATCH-9)
+Body `{ items: ItemRef[] }`. Each resolved item is applied as a **signed delta** (chronodrive §5.4–5.6) in
+one batched upstream call. Response `{ resolutions, applied: [{ productId, quantity }] }`.
 
-### §5.6 `GET /api/v1/cart/nutrition` — budget + nutrition aggregate · `PLANNED` (BATCH-9)
+### §5.5 `DELETE /api/v1/cart/items/{id}` — remove a cart line · `IMPLEMENTED` (BATCH-9)
 
-Sum of price (€) + macros across the cart (UC10). May also enrich `GET /api/v1/cart`.
+Reads the cart, finds the line for `{id}` (a product id), and posts the signed delta that brings it to 0
+(§5.6 safe removal). Absent from the cart → `404 not_found`. Response `{ removed: id }`.
 
-### §5.7 `GET /api/v1/lists` · `GET /api/v1/lists/{id}` — read lists · `PLANNED` (BATCH-9)
+### §5.6 `GET /api/v1/cart/nutrition` — budget + nutrition aggregate · `IMPLEMENTED` (BATCH-9)
 
-Upstream chronodrive §5.7–5.11.
+UC10: `{ totalPrice, lineCount, incompleteLines, nutrition }`. `totalPrice` is the authoritative cart total;
+the `nutrition` macros are summed across lines as **per-100g × (weightKg × 10) × quantity**. A line missing
+a net weight or any declared macro is counted in `incompleteLines` and excluded from the macro sum. Built
+from the same single cart call as §5.3.
 
-### §5.8 `POST|DELETE /api/v1/lists/{id}/items` — list add/remove · `PLANNED` (BATCH-9)
+### §5.7 `GET /api/v1/lists` · `GET /api/v1/lists/{id}` — read lists · `IMPLEMENTED` (BATCH-9)
 
-Idempotent add (chronodrive §5.8 / DECISION-019: re-adding is a `204`, quantity unchanged).
+`GET /lists` → `{ lists: ListSummary[] }` (id, name, nbItems, hasAvailableProduct; upstream §5.7).
+`GET /lists/{id}` → `NormalizedList` (id, name, `items: NormalizedCartLine[]` from §5.10 + `page`). Bad id
+→ `404 not_found`.
 
-### §5.9 `POST /api/v1/recipe-fill` — fill cart/list from a recipe · `PLANNED` (BATCH-9)
+### §5.8 `POST|DELETE /api/v1/lists/{id}/items` — list add/remove · `IMPLEMENTED` (BATCH-9)
 
-Body: a set of EANs/names + a target (cart or list id). Resolves each via §5.1/§5.2 and adds them in one
-call. Journalled with a `recipe_fill` event.
+`POST` body `{ items: ItemRef[] }` → idempotent add (chronodrive §5.8 / DECISION-019: re-adding is a `204`,
+quantity unchanged); response `{ resolutions, applied: productId[] }`. `DELETE` body `{ ids: string[] }` →
+remove by product id; response `{ removed: ids }`.
+
+### §5.9 `POST /api/v1/recipe-fill` — fill cart/list from a recipe · `IMPLEMENTED` (BATCH-9)
+
+Body `{ target: { cart: true } | { listId }, items: ItemRef[] }`. Resolves all items (mix of id/ean/name),
+then pushes the resolved set to the cart (batched signed delta) **or** the named list (idempotent add) in
+one go. Response `{ target, resolutions, added }`. Journalled with a `recipe_fill` event.
 
 ### §5.10 `GET|POST|DELETE /api/v1/price-tracking/*` — price tracking · `PLANNED` (BATCH-10)
 
@@ -203,5 +220,6 @@ prices and fires a **secret-free Home-Assistant webhook** on a qualifying drop (
 
 | Version | Date       | Summary                                                                                     |
 | ------- | ---------- | ------------------------------------------------------------------------------------------- |
+| 0.3.0   | 2026-06-28 | Cart & lists (BATCH-9 / BL-011): **§5.3–§5.9 `IMPLEMENTED`** — `GET /cart` + `GET /cart/nutrition` (budget+macros aggregate), `POST/DELETE /cart/items`, `GET /lists` + `/lists/{id}`, `POST/DELETE /lists/{id}/items`, `POST /recipe-fill`. New `ItemRef` write model (id/ean/name) with a per-item resolution report. |
 | 0.2.0   | 2026-06-28 | Products & nutrition (BATCH-8 / BL-010): **§5.1 `GET /search`** and **§5.2 `GET /products/{eanOrId}`** now `IMPLEMENTED` — `ProductSummary` / `NormalizedProduct` + `ProductNutrition` (essential §5.12.1 set), EAN-vs-id disambiguation, absolute image URLs; requires the upstream Products `x-api-key`. |
 | 0.1.0   | 2026-06-28 | Foundation (BATCH-7 / BL-008): prefix `/api/v1`, `X-API-Key` guard, error model, `GET /ping` stub, per-request `api_local` logging. All data endpoints (§5.1–§5.10) specified as `PLANNED`. |

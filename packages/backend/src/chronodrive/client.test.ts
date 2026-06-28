@@ -314,4 +314,27 @@ describe('ChronodriveClient (mocked)', () => {
     const client = makeClient('1016');
     expect(await client.getProductsByIds([])).toEqual([]);
   });
+
+  it('updateCartItems batches multiple lines in one content[] POST (signed deltas)', async () => {
+    let body: { content: Array<{ productId: string; quantity: number }> } = { content: [] };
+    pool.intercept({ path: '/v1/carts/CART1/items', method: 'POST' }).reply(200, (opts) => {
+      body = JSON.parse(opts.body as string);
+      return {
+        content: [
+          { productId: 'A', quantity: 1, returnType: 'SUCCESS' },
+          { productId: 'B', quantity: 3, returnType: 'SUCCESS' },
+        ],
+      };
+    });
+
+    const client = makeClient('1016');
+    const results = await client.updateCartItems('CART1', [
+      { productId: 'A', quantity: 1 },
+      { productId: 'B', quantity: -2 },
+    ]);
+
+    expect(body.content).toHaveLength(2);
+    expect(body.content[1]).toMatchObject({ productId: 'B', quantity: -2 });
+    expect(results).toHaveLength(2);
+  });
 });
