@@ -889,10 +889,10 @@
 - **Scope**: process/policy — no code behaviour. Traced here, in the three exposed contracts (a
   "Stability & compatibility policy" note), in `PROJECT_CONTEXT.md`, and in the agent's persistent memory so
   it binds future contexts. Applies retroactively (the version revert) and to all future batches.
-- **Release cut (2026-06-29)**: the user triggered the release as **`0.3.1`** (tag `v0.3.1` → GHCR), not
-  `0.3.0` — bundling the whole Layer-B epic (BATCH-7..11) **plus BATCH-12** (BL-014/BL-015) into the first
-  published image of the epic. `0.3.0` was never tagged. This honours (A): one user-triggered cut, no
-  per-batch bumps; the version number at cut time was the user's call.
+- **Release cut (2026-06-29)**: the user triggered the epic release as **`0.3.0`** (tag `v0.3.0` → GHCR —
+  the Layer-B epic BATCH-7..11, the epic's first published image, honouring (A): one user-triggered cut,
+  no per-batch bumps), then shipped **`0.3.1`** (tag `v0.3.1`) the same day as a patch adding **BATCH-12**
+  (BL-014/BL-015). Both image builds succeeded.
 
 ---
 

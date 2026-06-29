@@ -6,8 +6,9 @@
 > in-flight + result; last call wins) — a refinement of DECISION-020, firmware-only. **BL-015** — the HA
 > "Search" `IncompleteInput` is fixed by bounding the payload: `GET /api/v1/search` now takes `size`/`page`
 > (clamped; default 20 unchanged) and the firmware requests `&size=1`; local `contract.md` → **0.4.1**.
-> **The active `BACKLOG.md` is empty.** **DECISION-027** still holds: the Layer-B epic is ONE user-triggered
-> **0.3.0** release (still pending, independent of BATCH-12). Upstream `contract.md` (Chronodrive) at **1.5.0**.)
+> **The active `BACKLOG.md` is empty.** **Releases (both shipped 2026-06-29, DECISION-027):** the Layer-B
+> epic (BATCH-7..11) shipped as the single user-triggered **`0.3.0`** (tag `v0.3.0` → GHCR); **`0.3.1`**
+> (tag `v0.3.1`) is the patch adding BATCH-12. Upstream `contract.md` (Chronodrive) at **1.5.0**.)
 
 ---
 
@@ -51,9 +52,9 @@ barclaudegateway/
 > (Phase 6, DECISION-015). Docker is still never built or tested on Windows — only CI builds it.
 > The version started at **0.0.1**. The **whole Layer-B epic (BATCH-7..11) was developed as one
 > in-development release with no per-batch bumps** (DECISION-027; `package.json` accumulated at `0.3.0`).
-> The user **cut that release on 2026-06-29 as `0.3.1`** (tag `v0.3.1` → GHCR), bundling the epic **plus
-> BATCH-12** (BL-014 LED race fix + BL-015 search payload) — so **`0.3.1` is the first published image of
-> the epic** (the prior published image was `0.2.2`; `0.3.0` was never tagged). Under that release:
+> The user **cut that release on 2026-06-29 as `0.3.0`** (tag `v0.3.0` → GHCR — the epic's first published
+> image; the prior published image was `0.2.2`), then shipped **`0.3.1`** (tag `v0.3.1`) the same day as a
+> patch adding **BATCH-12** (BL-014 LED race fix + BL-015 search payload). Under `0.3.0`:
 > **BATCH-7** (BL-008 local "Layer B" API foundation — `/api/v1` prefix +
 > app-managed `X-API-Key` guard + `GET /api/v1/ping` stub + `api/local/contract.md`; BL-009 logging split
 > API Chronodrive vs API interne; DECISION-023); **BATCH-8** (BL-010 products & nutrition —
@@ -61,10 +62,10 @@ barclaudegateway/
 > DECISION-024); **BATCH-9** (BL-011 cart & lists — `GET /cart` + `/cart/nutrition`, `POST/DELETE
 > /cart/items`, lists CRUD, `POST /recipe-fill`, `ItemRef` id/ean/name; DECISION-025); **BATCH-10** (BL-012
 > in-gateway price tracking & HA alerts + the "Suivi des prix" page, on both `/api/v1/price-tracking/*` and
-> internal `/api/price-tracking/*`; DECISION-026); **BATCH-11** (BL-013 wiring/ops/YAML/docs/tests, scan
-> moved onto `POST /api/v1/scan`; DECISION-028 — epic complete); and **BATCH-12** (BL-014 single-owner LED
-> race fix + BL-015 bounded search payload, local `contract.md` → 0.4.1). Earlier published versions:
-> `0.2.2` shipped
+> internal `/api/price-tracking/*`; DECISION-026); and **BATCH-11** (BL-013 wiring/ops/YAML/docs/tests, scan
+> moved onto `POST /api/v1/scan`; DECISION-028 — epic complete). Then **`0.3.1`** added **BATCH-12** (BL-014
+> single-owner LED race fix + BL-015 bounded search payload, local `contract.md` → 0.4.1). Earlier published
+> versions: `0.2.2` shipped
 > **BATCH-6** (BL-007: lazy mode no longer force-fetches the shopping lists
 > on the config page; cached display + manual `POST /api/config/destinations/refresh`, refines
 > DECISION-021). `0.2.1` shipped **BATCH-5**

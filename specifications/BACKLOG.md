@@ -11,9 +11,9 @@
 >
 > Last updated: 2026-06-29 (**BATCH-12 shipped** — BL-014 single-owner LED race fix + BL-015 bounded
 > search payload; moved to `BACKLOG_ARCHIVE.md`. **The active backlog is now empty.** The DECISION-022
-> Layer-B epic (BATCH-7..11) is complete; the **0.3.0** release (DECISION-027) is still pending — run
-> [loop prompt 1](./prompts/loop-1-intake-triage.md) to add remarks, or
-> [loop prompt 3](./prompts/loop-3-ops-grooming.md) to re-verify.)
+> Layer-B epic (BATCH-7..11) shipped as **`0.3.0`**; BATCH-12 shipped as the **`0.3.1`** patch (both GHCR
+> builds succeeded, DECISION-027) — run [loop prompt 1](./prompts/loop-1-intake-triage.md) to add remarks,
+> or [loop prompt 3](./prompts/loop-3-ops-grooming.md) to re-verify.)
 
 ---
 
@@ -41,8 +41,8 @@
 The active backlog is **empty** — every triaged item has shipped (latest: **BATCH-12**, BL-014 + BL-015,
 2026-06-29; see [`BACKLOG_ARCHIVE.md`](./BACKLOG_ARCHIVE.md)).
 
-> The **DECISION-022 Local Chronodrive query API ("Layer B") epic** (BATCH-7..11) is complete — see
-> [`BACKLOG_ARCHIVE.md`](./BACKLOG_ARCHIVE.md). The **0.3.0** release (DECISION-027 — one user-triggered
-> release for the whole epic) is still pending and is independent of BATCH-12. Run
+> The **DECISION-022 Local Chronodrive query API ("Layer B") epic** (BATCH-7..11) is complete and shipped
+> as **`0.3.0`** (DECISION-027 — one user-triggered release for the whole epic); BATCH-12 shipped as the
+> **`0.3.1`** patch. See [`BACKLOG_ARCHIVE.md`](./BACKLOG_ARCHIVE.md). Run
 > [loop prompt 1](./prompts/loop-1-intake-triage.md) to add remarks, or
 > [loop prompt 3](./prompts/loop-3-ops-grooming.md) to re-verify.
