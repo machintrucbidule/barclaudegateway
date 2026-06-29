@@ -1,45 +1,24 @@
 # =============================================================================
 # BarclaudeGateway scanner — ESP32-C6 + GM861S (UART) + 1x WS2812
 #
-# Reads a barcode from the GM861S over UART, sends it to the BarclaudeGateway
-# local API (POST /api/v1/scan { "ean": "..." }, X-API-Key-guarded), and drives a
-# WS2812 LED with a colour per ScanResponse.status. Feedback is LED-only.
+# Scans a barcode, sends it to the BarclaudeGateway local API (POST /api/v1/scan,
+# X-API-Key-guarded), and shows the result on the WS2812: white while in flight,
+# then green = added, orange = lists-only / partial, red = not found / error /
+# unreachable. The "Search" text queries GET /api/v1/search and shows the first hit.
 #
-# ARCHITECTURE (why this is not the naive version):
-#   The gateway call is SYNCHRONOUS and can take several seconds (a cold scan
-#   triggers a full Chronodrive login). ESPHome's built-in `http_request` action
-#   is BLOCKING — it freezes the main loop for the whole request, which (a) trips
-#   the task watchdog and resets the chip on a slow response, and (b) corrupts the
-#   WS2812 frame (the LED is written while the loop is starved by the WiFi burst).
-#   So ALL gateway HTTP runs on a dedicated FreeRTOS worker task; the main loop
-#   only ENQUEUES requests and, on a 50 ms interval, DRAINS results to update the
-#   LED + sensors. The loop never blocks -> no crash, and the LED is always written
-#   from a calm loop -> correct colours.
+# API key: Config page -> "API locale" (or the gateway boot log). Paste it into
+# `local_api_key` below; re-flash after regenerating it.
 #
-#   Thread-safety: ONLY the main loop touches ESPHome entities/the light. The
-#   worker touches only esp_http_client, the FreeRTOS queues, and malloc/free.
-#   Hand-off is via three queues of `char*` (heap buffers): one request queue and
-#   one result queue per kind (scan / search). A failed/timed-out request yields a
-#   nullptr result -> red "unreachable" (never a frozen loop).
+# Secrets: create a `secrets.yaml` next to this file with: wifi_ssid, wifi_password,
+# ap_password, ota_password, api_encryption_key.
 #
-# Home-Assistant integration (all entities preserved): manual-EAN text + resend
-# button push an EAN through the same pipeline as a physical scan; a "Search" text
-# runs a keyword lookup; last EAN / status / product / price / search result are
-# text sensors; the GM861S tuning is exposed as config numbers; the LED is a
-# controllable light.
+# Wiring (pins set in `substitutions:`):
+#   GM861S TX  -> ESP RX (gm861_rx_pin, GPIO5)
+#   GM861S RX  -> ESP TX (gm861_tx_pin, GPIO4)   # only needed to configure the scanner
+#   GM861S VCC -> 3V3,  GND -> GND               # 3.3 V TTL
+#   WS2812 DIN -> led_pin (GPIO20),  VCC/GND per the module
 #
-# ESP32-C6 requires the esp-idf framework (Arduino does not support the C6).
-#
-# Secrets: create a `secrets.yaml` next to this file with wifi_ssid, wifi_password,
-# ap_password, ota_password, api_encryption_key. The local API key is a plain
-# substitution below (shared with the gateway) — paste it from the Config page.
-#
-# ---------------------------------------------------------------------------
-# Wiring (all pins configurable in `substitutions:`):
-#   GM861S  TX  -> ESP RX  (gm861_rx_pin, default GPIO5)
-#   GM861S  RX  -> ESP TX  (gm861_tx_pin, default GPIO4)    # optional, config only
-#   GM861S  VCC -> 3V3     GND -> GND        # GM861S is 3.3 V TTL
-#   WS2812  DIN -> led_pin (default GPIO20)   VCC/GND as per the module
+# ESP32-C6 needs the esp-idf framework (no Arduino support).
 # =============================================================================
 
 substitutions:
@@ -50,51 +29,41 @@ substitutions:
   server_host: '192.168.1.37'
   server_port: '8791'
 
-  # --- Local API (Layer B) ---
-  # The middleware's auto-generated X-API-Key. Copy it from the web UI: Config page -> "API locale"
-  # (or the boot logs: "[BarclaudeGateway] Local API key generated. X-API-Key: ..."). It guards EVERY
-  # /api/v1/* call. Regenerating it in the UI means pasting the new value here and re-flashing.
-  local_api_key: 'paste-the-key-from-the-config-page'
+  # --- Local API (Layer B) — guards every /api/v1/* call ---
+  local_api_key: 'paste-the-key-from-the-config-page' # Config page -> "API locale"
 
   # --- GM861S UART ---
   gm861_rx_pin: 'GPIO5' # ESP RX  <- scanner TX
-  gm861_tx_pin: 'GPIO4' # ESP TX  -> scanner RX (needed to configure the scanner)
+  gm861_tx_pin: 'GPIO4' # ESP TX  -> scanner RX
   gm861_baud: '9600'
 
-  # --- Feedback hardware ---
-  led_pin: 'GPIO20' # WS2812 data-in
-  led_brightness: '50%' # single source of truth for the WS2812 brightness
+  # --- WS2812 LED ---
+  led_pin: 'GPIO20' # data-in
+  led_brightness: '50%'
 
   # --- Timing ---
-  http_timeout: '15s' # gateway component timeout (kept; cold scans do a full login)
-  http_timeout_ms: '15000' # same value in ms, for the worker task's esp_http_client
-  feedback_ms: '2000ms' # how long the LED holds the result colour (an ESPHome duration)
+  http_timeout: '15s' # request timeout (a cold scan does a full Chronodrive login)
+  http_timeout_ms: '15000' # same, in ms
+  feedback_ms: '2000ms' # how long the LED holds the result colour
 
-  # ---------------------------------------------------------------------------
-  # GM861S scanner config
-  # Applied at boot over UART, re-pushed on any number change or via the
-  # "Apply scanner config" button. NOT saved to the scanner's flash (by design):
-  # the scanner boots at factory defaults every time and this config is the only
-  # source of truth. CRC is skipped (0xAB 0xCD) on every write frame.
-  # ---------------------------------------------------------------------------
+  # --- GM861S scanner config (pushed over UART at boot / on change; not saved to scanner flash) ---
   #
-  # reg 0x0000 = read mode + buzzer + both LEDs + illumination, one composed byte.
-  # 0xD7 = induction(11) + illumination standard(01) + buzzer on(1) + green LED on(1)
-  #   bit 7    green success LED   1 = on        0 = off
-  #   bit 6    buzzer              1 = on        0 = mute
-  #   bit 5-4  illumination (white)  00 = off  01 = on-at-read  10/11 = always-on
-  #   bit 3-2  illumination 2nd field (keep equal to bit5-4; factory example does 01)
-  #   bit 1-0  read mode           00 = manual  01 = cmd-trigger  10 = continuous  11 = induction
-  # Examples: continuous = 0xD6 | always-on light = 0xFB (11/11) | buzzer off = 0x97
+  # reg 0x0000 = read mode + buzzer + LED + illumination, one composed byte:
+  #   bit 7    green success LED   1 = on   0 = off
+  #   bit 6    buzzer             1 = on   0 = mute
+  #   bit 5-4  illumination       00 = off  01 = on-at-read  10/11 = always-on
+  #   bit 3-2  illumination (2nd field; keep = bit 5-4)
+  #   bit 1-0  read mode          00 = manual  01 = cmd-trigger  10 = continuous  11 = induction
+  # 0xD7 = induction + on-at-read illumination + buzzer + green LED.
+  # Examples: continuous = 0xD6 | always-on light = 0xFB | buzzer off = 0x97
   gm861_reg0000: '0xD7'
 
-  # Induction tuning defaults. Also exposed as HA numbers (restore_value: true,
-  # so HA edits persist in NVS and win over these on the next boot).
-  default_sensitivity: '200' # reg 0x000F, 0-255, HIGHER = LESS sensitive (factory 50)
-  default_same_barcode_delay_s: '3.0' # reg 0x0013, 0 = re-scan same EAN immediately, >0 = block for N s (max 12.7)
-  default_single_read_time_s: '5.0' # reg 0x0006, 0.1-25.5 s, time it tries before giving up
-  default_break_time_s: '1.0' # reg 0x0005, 0-25.5 s, pause before monitoring again
-  default_image_stab_s: '0.0' # reg 0x0004, 0-25.5 s, settle time after scene change before reading
+  # Tuning defaults (also editable from HA; HA edits persist in NVS and win on next boot).
+  default_sensitivity: '200' # 0-255, HIGHER = LESS sensitive
+  default_same_barcode_delay_s: '3.0' # 0-12.7 s; 0 = re-scan same EAN immediately, >0 = block for N s
+  default_single_read_time_s: '5.0' # 0.1-25.5 s, time it tries before giving up
+  default_break_time_s: '1.0' # 0-25.5 s, pause before monitoring again
+  default_image_stab_s: '0.0' # 0-25.5 s, settle time after scene change before reading
 
 esphome:
   name: ${device_name}
@@ -102,9 +71,8 @@ esphome:
   on_boot:
     priority: -100
     then:
-      # Create the FreeRTOS queues + the HTTP worker task BEFORE anything enqueues.
-      # Queues carry a single `char*` each (a heap buffer ptr). The worker blocks on
-      # the request queue and only touches the network from its own stack.
+      # Create the FreeRTOS queues + the HTTP worker task (all gateway HTTP runs off the main loop).
+      # Each queue carries one `char*` (a heap buffer); the worker is the only code that does network I/O.
       - lambda: |-
           id(http_req_q) = xQueueCreate(4, sizeof(char *));
           id(scan_res_q) = xQueueCreate(4, sizeof(char *));
@@ -190,7 +158,7 @@ ota:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-  # Default power-save (LIGHT) is kept on purpose: power_save_mode:none destabilised the C6.
+  # (do not set power_save_mode: none — it destabilised the C6)
 
   # Enable fallback hotspot (captive portal) in case wifi connection fails
   ap:
@@ -199,8 +167,7 @@ wifi:
 
 captive_portal:
 
-# Declared ONLY so the esp-idf build pulls <esp_http_client.h> into the generated code (the worker
-# lambda uses esp_http_client directly). No `http_request.*` action is used anywhere in this file.
+# Kept only to pull <esp_http_client.h> into the build (the worker uses esp_http_client directly).
 http_request:
   useragent: barclaude-scanner
   timeout: ${http_timeout}
@@ -443,8 +410,7 @@ interval:
             }
           }
 
-  # (2) Result drain: pop worker results and update entities + LED. Runs on the main loop, so it is the
-  # ONLY place that touches ESPHome state. nullptr body = the request failed/timed out -> red.
+  # (2) Result drain: pop worker results and update the sensors + LED. nullptr body = failed/timed out -> red.
   - interval: 50ms
     then:
       - lambda: |-
@@ -505,8 +471,7 @@ interval:
           }
 
 script:
-  # Push an EAN to the worker. Shows the in-flight WHITE immediately (calm loop -> clean frame), publishes
-  # last_ean, then enqueues a heap job ('S' + EAN). The worker turns it into POST /api/v1/scan.
+  # Show the in-flight WHITE, publish last_ean, then enqueue a job ('S' + EAN) -> worker POSTs /api/v1/scan.
   - id: enqueue_scan
     parameters:
       ean: string
@@ -539,8 +504,8 @@ script:
           memcpy(j + 1, q.c_str(), q.size() + 1);
           if (xQueueSend(id(http_req_q), &j, 0) != pdTRUE) free(j);
 
-  # Show a result colour for ${feedback_ms} then turn off. mode: restart => the latest result wins; it also
-  # cancels the in-flight white. Called only from the main-loop drain, so the WS2812 frame is always clean.
+  # Show a result colour for ${feedback_ms} then turn off. mode: restart => the latest call wins (and
+  # cancels the in-flight white).
   - id: show_result
     mode: restart
     parameters:
