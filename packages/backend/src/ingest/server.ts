@@ -47,6 +47,28 @@ export function buildServer(deps: ServerDeps, options: ServerOptions = {}): Fast
     logger: (options.logger ?? false) ? { formatters: { log: redactLogObject } } : false,
   });
 
+  // Tolerate an EMPTY JSON body. Fastify's default `application/json` parser rejects an empty body sent
+  // with `content-type: application/json` ("Body cannot be empty…"), which broke bodyless POSTs (e.g.
+  // regenerating the local API key, "connect", "check-now") from clients that always set the header.
+  // An empty body parses to `undefined`; a non-empty body is parsed as JSON (malformed → 400 as before).
+  app.addContentTypeParser(
+    'application/json',
+    { parseAs: 'string' },
+    (_request, body: string, done) => {
+      if (body === undefined || body === null || body.trim() === '') {
+        done(null, undefined);
+        return;
+      }
+      try {
+        done(null, JSON.parse(body));
+      } catch {
+        const err = new Error('Invalid JSON body') as Error & { statusCode?: number };
+        err.statusCode = 400;
+        done(err, undefined);
+      }
+    },
+  );
+
   // Error shaping is endpoint-specific: the scan endpoint always gets a parseable ScanResponse (the
   // firmware drives its LED from `status`), while every other `/api` route gets plain JSON. The scan is
   // now `POST /api/v1/scan` (BL-013/DECISION-028), so it must be matched BEFORE the generic `/api` branch.

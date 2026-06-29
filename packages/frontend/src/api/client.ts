@@ -79,13 +79,14 @@ async function getJson<T>(url: string): Promise<T> {
 }
 
 async function sendJson<T>(method: string, url: string, body?: unknown): Promise<T> {
-  return parse<T>(
-    await fetch(url, {
-      method,
-      headers: { 'content-type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    }),
-  );
+  // Only declare a JSON body when there actually is one — otherwise Fastify rejects an empty body
+  // sent with `content-type: application/json` ("Body cannot be empty…"). Bodyless POSTs (regenerate
+  // key, connect, test webhook, refresh, check-now) carry no content-type.
+  const init: RequestInit =
+    body === undefined
+      ? { method }
+      : { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
+  return parse<T>(await fetch(url, init));
 }
 
 export const api = {

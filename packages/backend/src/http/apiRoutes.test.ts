@@ -889,6 +889,18 @@ describe('api routes (fastify.inject)', () => {
     });
   });
 
+  it('tolerates an empty JSON body on a bodyless POST (regenerate with content-type set)', async () => {
+    h.configStore.set(CONFIG_KEYS.localApiKey, 'K0');
+    // The frontend used to send `content-type: application/json` with no body → Fastify 400. Now tolerated.
+    const res = await h.app.inject({
+      method: 'POST',
+      url: '/api/local-api-key/regenerate',
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().key).not.toBe('K0');
+  });
+
   it('PUT /api/config journals a config_change event (BL-003)', async () => {
     await h.app.inject({ method: 'PUT', url: '/api/config', payload: CONFIG });
     const events = h.eventLog.query({ page: 1, pageSize: 50 });
