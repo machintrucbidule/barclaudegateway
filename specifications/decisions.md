@@ -575,17 +575,20 @@
   `docs/esphome-contract.md`); no middleware/app code change. The firmware is not part of the Docker
   image, so **no app version bump**.
 - **Shipped in**: BATCH-1 (loop prompt 2, 2026-06-27). Full entry in `BACKLOG_ARCHIVE.md`.
-- **Refinement (BATCH-12 / BL-014, 2026-06-29)**: the LED feedback above was intermittently showing the
-  wrong colour (yellow in-flight, cyan "ok") — a **software race**, not hardware. Two owners drove the
-  WS2812 (an inline white `light.turn_on` in `send_scan` plus the `set_led` result script), so a
-  `mode: restart` re-fire could overlap a white write with a result clear and blend channels. **Fix:** one
-  `mode: restart` script (`set_led(r, g, b, off_after_ms)`) is now the **sole LED owner** for every state
-  (white in-flight with `off_after_ms=0`, result colour with `off_after_ms=${feedback_ms}`); same id +
-  `mode: restart` means the **last call wins** (each call cancels the previous sequence incl. a pending
-  turn-off), with no partial-channel writes. A `led_brightness` substitution centralises brightness. This
-  **refines, does not reverse** DECISION-020 — the colour mapping and `ScanResponse` contract are
-  unchanged. **Firmware + docs only** (no app version bump). No optional local debounce (the GM861S reg
-  0x0013 same-barcode delay already covers double-reads). Full entry in `BACKLOG_ARCHIVE.md`.
+- **Refinement (BATCH-12 / BL-014, 2026-06-29; re-diagnosed + shipped as 0.3.2)**: the LED intermittently
+  showed the wrong colour (yellow in-flight, cyan "ok") **and a cold scan crashed the ESP**. The first
+  hypothesis (a "software race" between two LED owners) was **wrong** — on-device logs proved the firmware
+  always commanded the correct RGB and that manual LED control was always clean. **Real root cause (one
+  thing):** ESPHome's `http_request` action is **blocking**, so a multi-second scan (a cold Chronodrive
+  login) froze the main loop → (a) the task watchdog **reset the chip** on slow responses (no result LED),
+  and (b) the starved WS2812 RMT frame dropped its last byte (blue, GRB) → white→yellow, green→cyan.
+  **Fix (shipped):** a **full firmware rewrite** that runs all gateway HTTP on a **FreeRTOS worker task**
+  (`esp_http_client`); the main loop only enqueues requests and drains results (LED/sensors updated on the
+  loop only). The loop never blocks → no reset; the LED is written from a calm loop → correct colours.
+  Single YAML, all HA entities/colours/GPIO/registers preserved. This **refines, does not reverse**
+  DECISION-020 (colour mapping + `ScanResponse` contract unchanged). **Firmware only** — not in the Docker
+  image; the `0.3.2` tag was the user's cut to mark the milestone (image identical to `0.3.1`). Verified on
+  hardware. Full entry in `BACKLOG_ARCHIVE.md`.
 
 ---
 

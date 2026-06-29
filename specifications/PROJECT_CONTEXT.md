@@ -1,14 +1,15 @@
 # BarclaudeGateway — Project Context
 
 > **This file is read at the start of every development step.** Keep it up to date.
-> Last updated: 2026-06-29 (**BATCH-12 shipped**: two scanner fixes. **BL-014** — the WS2812 wrong-colour
-> race is fixed by making `set_led` the **single LED owner** (`mode: restart`, parameterised for white
-> in-flight + result; last call wins) — a refinement of DECISION-020, firmware-only. **BL-015** — the HA
-> "Search" `IncompleteInput` is fixed by bounding the payload: `GET /api/v1/search` now takes `size`/`page`
-> (clamped; default 20 unchanged) and the firmware requests `&size=1`; local `contract.md` → **0.4.1**.
-> **The active `BACKLOG.md` is empty.** **Releases (both shipped 2026-06-29, DECISION-027):** the Layer-B
-> epic (BATCH-7..11) shipped as the single user-triggered **`0.3.0`** (tag `v0.3.0` → GHCR); **`0.3.1`**
-> (tag `v0.3.1`) is the patch adding BATCH-12. Upstream `contract.md` (Chronodrive) at **1.5.0**.)
+> Last updated: 2026-06-29 (**BATCH-12 shipped**: two scanner fixes. **BL-015** — the HA "Search"
+> `IncompleteInput` fixed by bounding the payload: `GET /api/v1/search` takes `size`/`page` (clamped;
+> default 20) and the firmware requests `&size=1`; local `contract.md` → **0.4.1**. **BL-014** — the
+> wrong-colour + cold-scan-crash was **re-diagnosed on hardware**: the cause was ESPHome's **blocking**
+> `http_request` freezing the main loop (watchdog reset + starved WS2812 frame), NOT a "race". Fixed by a
+> **firmware rewrite to async HTTP on a FreeRTOS worker task** — verified on hardware. **The active
+> `BACKLOG.md` is empty.** **Releases (DECISION-027):** Layer-B epic = **`0.3.0`**; BATCH-12 (BL-015 +
+> first BL-014 attempt) = **`0.3.1`**; the BL-014 async rewrite = **`0.3.2`** (firmware only — image
+> identical to 0.3.1). Upstream `contract.md` (Chronodrive) at **1.5.0**.)
 
 ---
 
@@ -54,7 +55,9 @@ barclaudegateway/
 > in-development release with no per-batch bumps** (DECISION-027; `package.json` accumulated at `0.3.0`).
 > The user **cut that release on 2026-06-29 as `0.3.0`** (tag `v0.3.0` → GHCR — the epic's first published
 > image; the prior published image was `0.2.2`), then shipped **`0.3.1`** (tag `v0.3.1`) the same day as a
-> patch adding **BATCH-12** (BL-014 LED race fix + BL-015 search payload). Under `0.3.0`:
+> patch adding **BATCH-12** (BL-015 search payload + a first BL-014 LED attempt), and finally **`0.3.2`**
+> (tag `v0.3.2`) — the **BL-014 firmware rewrite to async FreeRTOS HTTP** (firmware only; the image is
+> identical to `0.3.1`). Under `0.3.0`:
 > **BATCH-7** (BL-008 local "Layer B" API foundation — `/api/v1` prefix +
 > app-managed `X-API-Key` guard + `GET /api/v1/ping` stub + `api/local/contract.md`; BL-009 logging split
 > API Chronodrive vs API interne; DECISION-023); **BATCH-8** (BL-010 products & nutrition —
@@ -63,9 +66,9 @@ barclaudegateway/
 > /cart/items`, lists CRUD, `POST /recipe-fill`, `ItemRef` id/ean/name; DECISION-025); **BATCH-10** (BL-012
 > in-gateway price tracking & HA alerts + the "Suivi des prix" page, on both `/api/v1/price-tracking/*` and
 > internal `/api/price-tracking/*`; DECISION-026); and **BATCH-11** (BL-013 wiring/ops/YAML/docs/tests, scan
-> moved onto `POST /api/v1/scan`; DECISION-028 — epic complete). Then **`0.3.1`** added **BATCH-12** (BL-014
-> single-owner LED race fix + BL-015 bounded search payload, local `contract.md` → 0.4.1). Earlier published
-> versions: `0.2.2` shipped
+> moved onto `POST /api/v1/scan`; DECISION-028 — epic complete). **BATCH-12** then shipped across `0.3.1`
+> (BL-015 + first BL-014 attempt, local `contract.md` → 0.4.1) and `0.3.2` (BL-014 async firmware rewrite).
+> Earlier published versions: `0.2.2` shipped
 > **BATCH-6** (BL-007: lazy mode no longer force-fetches the shopping lists
 > on the config page; cached display + manual `POST /api/config/destinations/refresh`, refines
 > DECISION-021). `0.2.1` shipped **BATCH-5**

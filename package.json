@@ -1,6 +1,6 @@
 {
   "name": "barclaudegateway",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "Self-hosted middleware bridging an ESP32 barcode scanner with the Chronodrive private grocery API.",
   "license": "MIT",

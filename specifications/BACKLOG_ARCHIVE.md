@@ -6,9 +6,10 @@
 >
 > Newest entries on top. Nothing here is active work — the active backlog is [`BACKLOG.md`](./BACKLOG.md).
 >
-> Last updated: 2026-06-29 (BATCH-12 — BL-014 single-owner LED race fix + BL-015 bounded search payload;
-> firmware + a small additive backend/contract change. Shipped in the **`0.3.1`** patch release (the
-> Layer-B epic itself shipped earlier the same day as **`0.3.0`**); both GHCR builds succeeded.)
+> Last updated: 2026-06-29 (BATCH-12 — BL-014 scanner LED/crash fix + BL-015 bounded search payload. BL-015
+> + the first BL-014 attempt shipped in **`0.3.1`**; BL-014 was then **re-diagnosed on hardware** (blocking
+> HTTP in the main loop, not a "race") and fixed by a **firmware rewrite to async FreeRTOS HTTP**, shipped
+> as **`0.3.2`**. The Layer-B epic itself shipped as **`0.3.0`**.)
 
 ---
 
@@ -23,34 +24,28 @@
 
 - Type: Bug · Priority: P2 · Batch: BATCH-12 · Source: user remark (2026-06-29)
 - **Date shipped**: 2026-06-29
-- **Description (root cause)**: the WS2812 intermittently showed the wrong colour — yellow instead of white
-  in-flight, cyan/blue instead of green "ok". A **software race**, not hardware: two owners drove the LED
-  — `send_scan` wrote white inline (`light.turn_on`) AND the `set_led` script wrote the result colour then
-  auto-off. `send_scan` is `mode: restart`, fired from several sources, so writes/clears overlapped and
-  channels blended (white−blue = yellow; green + leftover blue = cyan).
-- **What was actually done** (`firmware/esphome/barclaude-scanner.yaml`):
-  - Made **`set_led` the sole LED writer**, parameterised for every state. It now takes
-    `off_after_ms: int`: `light.turn_on` full R/G/B at `brightness: ${led_brightness}` instantly, then
-    `if off_after_ms > 0` → `delay <off_after_ms>` + `light.turn_off`. `mode: restart` means a new call
-    cancels the previous sequence (incl. a pending turn-off) → **last call wins**, no overlap, no ghost
-    turn-off. Every write sets the full R/G/B (no partial-channel writes).
-  - **Removed the second LED owner** in `send_scan`: deleted the `script.stop: set_led` + the inline white
-    `light.turn_on` block; the in-flight white is now `set_led(255,255,255, 0)` (stays on until the result
-    call). Kept the one `${white_flush_ms}` yield so the strip flushes white before the blocking POST.
-  - Result calls (and the no-response branch) pass `${feedback_ms}` as the 4th arg: green
-    `set_led(0,180,0, ${feedback_ms})`, orange `(255,185,10, …)`, red `(200,0,0, …)`.
-  - Added a **`led_brightness`** substitution (default `'50%'`) — single source of truth for LED brightness
-    (was hard-coded `brightness: 50%` in two places). `feedback_ms` is now a plain int of ms (`'1500'`),
-    consumed by `set_led`'s int param.
-  - **No** optional local debounce (user's choice): the GM861S reg 0x0013 same-barcode delay already covers
-    double-reads; the single-owner refactor alone removes the artefacts.
-  - Docs: `docs/esphome-contract.md` gained a "Single-owner LED (BL-014)" note. A **refinement of
-    DECISION-020** (no new decision number).
-- **Acceptance criteria — met (pending on-hardware confirmation by the user after flashing)**: repeated
-  back-to-back scans show white in-flight then the correct mapped colour (green/orange/red) with no
-  yellow/cyan; the result holds `feedback_ms` then turns off; manual-EAN + resend paths show the correct
-  colour; no regression in the scan→cart/list outcome. (Firmware is not unit-tested; validation is the
-  DECISION-020-style hardware check.)
+- **Description (symptom)**: the WS2812 intermittently showed the wrong colour — yellow instead of white
+  in-flight, cyan/blue instead of green "ok" — and a **cold scan crashed the ESP** (no result LED).
+- **Diagnosis — corrected on hardware**: the first hypothesis (a "software race" between two LED owners)
+  was **wrong**. On-device logs proved the firmware always commanded the *correct* RGB and that manual LED
+  control was always clean. The real root cause is a **single one**: ESPHome's `http_request` action is
+  **blocking**, so a multi-second scan (a cold Chronodrive login) froze the main loop — which (a) tripped
+  the task watchdog and **reset the chip** on a slow response (`Reason: Fault`, hence no green), and
+  (b) **starved the WS2812 RMT frame**, dropping its last byte (blue, in GRB) → white→yellow, green→cyan.
+- **What was actually shipped** — a **full firmware rewrite** moving all gateway HTTP onto a **FreeRTOS
+  worker task** (`firmware/esphome/barclaude-scanner.yaml`): the main loop only enqueues requests and, on a
+  50 ms drain interval, applies results to the LED + sensors. The loop never blocks → **no watchdog reset**;
+  the LED is always written from a calm loop → **correct colours**. Hand-off via three FreeRTOS queues of
+  `char*` (request + result per kind); a failed/timed-out request yields `nullptr` → red "unreachable".
+  `esp_http_client` re-enabled via `include_builtin_idf_components`; single YAML, no companion file. Every
+  user-facing HA entity, colour code, GPIO and GM861S register preserved. (Two intermediate attempts —
+  single-owner `set_led`, then a `hold:bool` variant — were supeseded and are not in the shipped file.)
+- **Acceptance criteria — met (verified on hardware by the user)**: a **cold scan no longer crashes**
+  (white held during the ~4 s login, then the correct colour); warm scans are fast and correct; rapid
+  scans show white→colour with **no yellow/cyan**; manual-EAN, resend and Search all work. (Firmware is not
+  unit-tested; this is the DECISION-020-style hardware validation.)
+- **Commit/PR**: the async rewrite landed in [#6](https://github.com/machintrucbidule/barclaudegateway/pull/6)
+  → `main`, shipped in the **`0.3.2`** release (the obsolete single-owner attempt, #5, was closed).
 
 ### [BL-015] Fix the ESP "Search" field: bound the search payload so the result parses
 
