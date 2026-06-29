@@ -7,8 +7,8 @@
 > Newest entries on top. Nothing here is active work — the active backlog is [`BACKLOG.md`](./BACKLOG.md).
 >
 > Last updated: 2026-06-29 (BATCH-12 — BL-014 single-owner LED race fix + BL-015 bounded search payload;
-> firmware + a small additive backend/contract change. NB: DECISION-027 — the pending 0.3.0 release is
-> independent of BATCH-12; firmware is not in the Docker image.)
+> firmware + a small additive backend/contract change. Shipped in the **`0.3.1`** patch release (the
+> Layer-B epic itself shipped earlier the same day as **`0.3.0`**); both GHCR builds succeeded.)
 
 ---
 
@@ -79,8 +79,9 @@
   `size=1` → `searchProducts('carottes',1,1)`; no params → `(…,1,20)`; `size=999&page=3` → clamped
   `(…,3,50)`; non-numeric → defaults; empty `q` → `400` and upstream not called. Lint/typecheck/format green.
 
-- **Commit/PR**: branch `fix/batch-12-scanner-firmware` → `main` (loop prompt 2, 2026-06-29); shipped in
-  the **`0.3.1`** release (tag `v0.3.1` → GHCR — the epic's first published image, DECISION-027).
+- **Commit/PR**: branch `fix/batch-12-scanner-firmware` → `main` (merge `67bd30e`, loop prompt 2,
+  2026-06-29); shipped in the **`0.3.1`** patch release (tag `v0.3.1` → GHCR, build succeeded — the Layer-B
+  epic itself shipped earlier the same day as `0.3.0`, DECISION-027).
 
 ---
 
