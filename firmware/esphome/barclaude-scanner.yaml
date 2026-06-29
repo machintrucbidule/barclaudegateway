@@ -1,36 +1,24 @@
 # =============================================================================
-# BarclaudeGateway scanner — ESP32-C6 + GM861S (UART)
+# BarclaudeGateway scanner — ESP32-C6 + GM861S (UART) + 1x WS2812
 #
-# Reads a barcode from the GM861S over UART, POSTs it to the BarclaudeGateway
-# middleware (POST /api/v1/scan { "ean": "..." }, key-guarded — DECISION-028),
-# waits for the synchronous ScanResponse, and drives an EXTERNAL WS2812 LED with
-# a colour per ScanResponse.status. Feedback is LED-only (no buzzer — DECISION-020).
-# Contract: docs/esphome-contract.md (the middleware always returns a JSON
-# ScanResponse body, even on HTTP 400/502, so we switch on `status`).
+# Scans a barcode, sends it to the BarclaudeGateway local API (POST /api/v1/scan,
+# X-API-Key-guarded), and shows the result on the WS2812: white while in flight,
+# then green = added, orange = lists-only / partial, red = not found / error /
+# unreachable. The "Search" text queries GET /api/v1/search and shows the first hit.
 #
-# The scan and the keyword-search both hit the local "Layer B" API under
-# /api/v1/* and must send the `X-API-Key` header (the `local_api_key`
-# substitution below). Copy that key from the web UI: Config page -> "API locale".
+# API key: Config page -> "API locale" (or the gateway boot log). Paste it into
+# `local_api_key` below; re-flash after regenerating it.
 #
-# Home-Assistant integration: a manual-EAN text + a resend button push an EAN
-# through the SAME pipeline as a physical scan; a "Search" text runs a keyword
-# lookup; last EAN / last status / last product / last price / search result are
-# exposed as sensors; the GM861S tuning is exposed as config numbers.
+# Secrets: create a `secrets.yaml` next to this file with: wifi_ssid, wifi_password,
+# ap_password, ota_password, api_encryption_key.
 #
-# ESP32-C6 requires the esp-idf framework in ESPHome (Arduino does not support
-# the C6). Needs a recent ESPHome (esp-idf >= 5.1).
+# Wiring (pins set in `substitutions:`):
+#   GM861S TX  -> ESP RX (gm861_rx_pin, GPIO5)
+#   GM861S RX  -> ESP TX (gm861_tx_pin, GPIO4)   # only needed to configure the scanner
+#   GM861S VCC -> 3V3,  GND -> GND               # 3.3 V TTL
+#   WS2812 DIN -> led_pin (GPIO20),  VCC/GND per the module
 #
-# Secrets: create a `secrets.yaml` next to this file with: wifi_ssid,
-# wifi_password, ap_password, ota_password, api_encryption_key. The local API
-# key is a plain substitution below (it is shared with the gateway, not a wifi
-# secret) — paste it from the Config page.
-#
-# ---------------------------------------------------------------------------
-# Wiring (all pins are configurable in the `substitutions:` block below):
-#   GM861S  TX  -> ESP RX  (gm861_rx_pin, default GPIO5)
-#   GM861S  RX  -> ESP TX  (gm861_tx_pin, default GPIO4)    # optional, config only
-#   GM861S  VCC -> 3V3     GND -> GND        # GM861S is 3.3 V TTL — do NOT use 5 V logic
-#   WS2812  DIN -> led_pin (default GPIO20)   VCC/GND as per the module
+# ESP32-C6 needs the esp-idf framework (no Arduino support).
 # =============================================================================
 
 substitutions:
@@ -41,52 +29,41 @@ substitutions:
   server_host: '192.168.1.37'
   server_port: '8791'
 
-  # --- Local API (Layer B) ---
-  # The middleware's auto-generated X-API-Key. Copy it from the web UI: Config page -> "API locale"
-  # (or from the container/boot logs: "[BarclaudeGateway] Local API key generated. X-API-Key: ...").
-  # It guards EVERY /api/v1/* call, including the scan (DECISION-028). Regenerating it in the UI means
-  # you must paste the new value here and re-flash.
-  local_api_key: 'paste-the-key-from-the-config-page'
+  # --- Local API (Layer B) — guards every /api/v1/* call ---
+  local_api_key: 'paste-the-key-from-the-config-page' # Config page -> "API locale"
 
   # --- GM861S UART ---
   gm861_rx_pin: 'GPIO5' # ESP RX  <- scanner TX
-  gm861_tx_pin: 'GPIO4' # ESP TX  -> scanner RX (needed to configure the scanner)
+  gm861_tx_pin: 'GPIO4' # ESP TX  -> scanner RX
   gm861_baud: '9600'
 
-  # --- Feedback hardware ---
-  led_pin: 'GPIO20' # WS2812 data-in
-  led_brightness: '50%' # single source of truth for the WS2812 brightness (used by set_led)
+  # --- WS2812 LED ---
+  led_pin: 'GPIO20' # data-in
+  led_brightness: '50%'
 
   # --- Timing ---
-  http_timeout: '8s'
-  feedback_ms: '1500' # how long the LED holds the result colour, in ms (passed as an int to set_led)
-  white_flush_ms: '100ms' # let the light loop push WHITE to the LED before the blocking POST
+  http_timeout: '15s' # request timeout (a cold scan does a full Chronodrive login)
+  http_timeout_ms: '15000' # same, in ms
+  feedback_ms: '2000ms' # how long the LED holds the result colour
 
-  # ---------------------------------------------------------------------------
-  # GM861S scanner config
-  # Applied at boot over UART, re-pushed on any number change or via the
-  # "Apply scanner config" button. NOT saved to the scanner's flash (by design):
-  # the scanner boots at factory defaults every time and this config is the only
-  # source of truth. CRC is skipped (0xAB 0xCD) on every write frame.
-  # ---------------------------------------------------------------------------
+  # --- GM861S scanner config (pushed over UART at boot / on change; not saved to scanner flash) ---
   #
-  # reg 0x0000 = read mode + buzzer + both LEDs + illumination, one composed byte.
-  # 0xD7 = induction(11) + illumination standard(01) + buzzer on(1) + green LED on(1)
-  #   bit 7    green success LED   1 = on        0 = off
-  #   bit 6    buzzer              1 = on        0 = mute
-  #   bit 5-4  illumination (white)  00 = off  01 = on-at-read  10/11 = always-on
-  #   bit 3-2  illumination 2nd field (keep equal to bit5-4; factory example does 01)
-  #   bit 1-0  read mode           00 = manual  01 = cmd-trigger  10 = continuous  11 = induction
-  # Examples: continuous = 0xD6 | always-on light = 0xFB (11/11) | buzzer off = 0x97
+  # reg 0x0000 = read mode + buzzer + LED + illumination, one composed byte:
+  #   bit 7    green success LED   1 = on   0 = off
+  #   bit 6    buzzer             1 = on   0 = mute
+  #   bit 5-4  illumination       00 = off  01 = on-at-read  10/11 = always-on
+  #   bit 3-2  illumination (2nd field; keep = bit 5-4)
+  #   bit 1-0  read mode          00 = manual  01 = cmd-trigger  10 = continuous  11 = induction
+  # 0xD7 = induction + on-at-read illumination + buzzer + green LED.
+  # Examples: continuous = 0xD6 | always-on light = 0xFB | buzzer off = 0x97
   gm861_reg0000: '0xD7'
 
-  # Induction tuning defaults. Also exposed as HA numbers (restore_value: true,
-  # so HA edits persist in NVS and win over these on the next boot).
-  default_sensitivity: '50' # reg 0x000F, 0-255, HIGHER = LESS sensitive (factory 50)
-  default_same_barcode_delay_s: '3.0' # reg 0x0013, 0 = re-scan same EAN immediately, >0 = block for N s (max 12.7)
-  default_single_read_time_s: '5.0' # reg 0x0006, 0.1-25.5 s, time it tries before giving up
-  default_break_time_s: '1.0' # reg 0x0005, 0-25.5 s, pause before monitoring again
-  default_image_stab_s: '0.0' # reg 0x0004, 0-25.5 s, settle time after scene change before reading
+  # Tuning defaults (also editable from HA; HA edits persist in NVS and win on next boot).
+  default_sensitivity: '200' # 0-255, HIGHER = LESS sensitive
+  default_same_barcode_delay_s: '3.0' # 0-12.7 s; 0 = re-scan same EAN immediately, >0 = block for N s
+  default_single_read_time_s: '5.0' # 0.1-25.5 s, time it tries before giving up
+  default_break_time_s: '1.0' # 0-25.5 s, pause before monitoring again
+  default_image_stab_s: '0.0' # 0-25.5 s, settle time after scene change before reading
 
 esphome:
   name: ${device_name}
@@ -94,6 +71,66 @@ esphome:
   on_boot:
     priority: -100
     then:
+      # Create the FreeRTOS queues + the HTTP worker task (all gateway HTTP runs off the main loop).
+      # Each queue carries one `char*` (a heap buffer); the worker is the only code that does network I/O.
+      - lambda: |-
+          id(http_req_q) = xQueueCreate(4, sizeof(char *));
+          id(scan_res_q) = xQueueCreate(4, sizeof(char *));
+          id(search_res_q) = xQueueCreate(4, sizeof(char *));
+          xTaskCreate(
+            [](void *) {
+              char *job = nullptr;
+              for (;;) {
+                if (xQueueReceive(id(http_req_q), &job, portMAX_DELAY) != pdTRUE || job == nullptr) continue;
+                char type = job[0];                 // 'S' = scan (POST), 'Q' = search (GET)
+                std::string payload(job + 1);
+                free(job);
+                bool is_scan = (type == 'S');
+
+                std::string url;
+                std::string post_body;
+                if (is_scan) {
+                  url = "http://${server_host}:${server_port}/api/v1/scan";
+                  post_body = std::string("{\"ean\":\"") + payload + "\"}";
+                } else {
+                  std::string enc;                  // minimal URL-encoding (space -> %20)
+                  for (char ch : payload) { if (ch == ' ') enc += "%20"; else enc += ch; }
+                  url = std::string("http://${server_host}:${server_port}/api/v1/search?q=") + enc + "&size=1";
+                }
+
+                esp_http_client_config_t cfg = {};
+                cfg.url = url.c_str();
+                cfg.method = is_scan ? HTTP_METHOD_POST : HTTP_METHOD_GET;
+                cfg.timeout_ms = ${http_timeout_ms};
+                esp_http_client_handle_t client = esp_http_client_init(&cfg);
+                esp_http_client_set_header(client, "X-API-Key", "${local_api_key}");
+                if (is_scan) esp_http_client_set_header(client, "Content-Type", "application/json");
+
+                char *body = nullptr;               // nullptr => failure/timeout => red "unreachable"
+                int write_len = is_scan ? (int) post_body.size() : 0;
+                if (esp_http_client_open(client, write_len) == ESP_OK) {
+                  bool ok = true;
+                  if (write_len > 0)
+                    ok = esp_http_client_write(client, post_body.c_str(), write_len) == write_len;
+                  if (ok) {
+                    esp_http_client_fetch_headers(client);
+                    const int CAP = 2048;           // ScanResponse ~0.5 KB, search&size=1 < 1 KB
+                    body = (char *) malloc(CAP);
+                    if (body != nullptr) {
+                      int n = 0, r;
+                      while (n < CAP - 1 && (r = esp_http_client_read(client, body + n, CAP - 1 - n)) > 0) n += r;
+                      body[n] = '\0';
+                    }
+                  }
+                }
+                esp_http_client_close(client);
+                esp_http_client_cleanup(client);
+
+                QueueHandle_t out = is_scan ? id(scan_res_q) : id(search_res_q);
+                if (xQueueSend(out, &body, 0) != pdTRUE && body != nullptr) free(body);  // drop if drain is behind
+              }
+            },
+            "bcg_http", 8192, nullptr, 5, nullptr);
       - delay: 1s # GM861S startup is <=250 ms; wait + let UART settle before pushing config
       - script.execute: apply_scanner_config
 
@@ -101,6 +138,10 @@ esp32:
   board: esp32-c6-devkitc-1
   framework:
     type: esp-idf
+    advanced:
+      # The worker uses the IDF HTTP client directly; re-enable its (otherwise excluded) builtin component.
+      include_builtin_idf_components:
+        - esp_http_client
 
 logger:
   task_log_buffer_size: 2048
@@ -117,6 +158,7 @@ ota:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  # (do not set power_save_mode: none — it destabilised the C6)
 
   # Enable fallback hotspot (captive portal) in case wifi connection fails
   ap:
@@ -125,6 +167,7 @@ wifi:
 
 captive_portal:
 
+# Kept only to pull <esp_http_client.h> into the build (the worker uses esp_http_client directly).
 http_request:
   useragent: barclaude-scanner
   timeout: ${http_timeout}
@@ -147,6 +190,29 @@ light:
     default_transition_length: 0s
     restore_mode: ALWAYS_OFF
 
+globals:
+  # UART assembly buffer + the "configuring, ignore UART" flag.
+  - id: scan_buf
+    type: std::string
+    restore_value: no
+  - id: gm861_configuring
+    type: bool
+    restore_value: no
+    initial_value: 'true'
+  # FreeRTOS hand-off queues (created in on_boot). Each carries one `char*`.
+  - id: http_req_q
+    type: QueueHandle_t
+    restore_value: no
+    initial_value: 'nullptr'
+  - id: scan_res_q
+    type: QueueHandle_t
+    restore_value: no
+    initial_value: 'nullptr'
+  - id: search_res_q
+    type: QueueHandle_t
+    restore_value: no
+    initial_value: 'nullptr'
+
 text:
   - platform: template
     name: '${friendly_name} Manual EAN'
@@ -163,11 +229,11 @@ text:
               lambda: 'return !x.empty();'
             then:
               - script.execute:
-                  id: send_scan
+                  id: enqueue_scan
                   ean: !lambda 'return x;'
 
-  # BL-013: keyword search over the local API (GET /api/v1/search?q=). Type a keyword in HA; the first
-  # result (name + price) lands in the "Search result" sensor. Uses the X-API-Key like every /api/v1 call.
+  # Keyword search over the local API (GET /api/v1/search?q=...&size=1). The first result (name + price)
+  # lands in the "Search result" sensor. Runs on the worker task, like the scan.
   - platform: template
     name: '${friendly_name} Search'
     id: search_query
@@ -182,33 +248,9 @@ text:
             condition:
               lambda: 'return !x.empty();'
             then:
-              # BL-015: request only ONE result (&size=1). The default page of 20 (~8 KB) overruns the ESP
-              # http_request buffer and ArduinoJson reports IncompleteInput; we only ever show the first hit.
-              - http_request.get:
-                  url: !lambda |-
-                    std::string enc;
-                    for (char c : x) { if (c == ' ') enc += "%20"; else enc += c; }
-                    return std::string("http://${server_host}:${server_port}/api/v1/search?q=") + enc + "&size=1";
-                  capture_response: true
-                  request_headers:
-                    X-API-Key: '${local_api_key}'
-                  on_response:
-                    then:
-                      - lambda: |-
-                          std::string out = "aucun résultat";
-                          json::parse_json(body, [&](JsonObject root) -> bool {
-                            JsonArray products = root["products"];
-                            if (!products.isNull() && products.size() > 0) {
-                              std::string name = products[0]["name"] | "";
-                              float price = products[0]["price"]["default"] | -1.0f;
-                              char buf[160];
-                              if (price >= 0.0f) snprintf(buf, sizeof(buf), "%s — %.2f €", name.c_str(), price);
-                              else snprintf(buf, sizeof(buf), "%s", name.c_str());
-                              out = buf;
-                            }
-                            return true;
-                          });
-                          id(search_result).publish_state(out);
+              - script.execute:
+                  id: enqueue_search
+                  q: !lambda 'return x;'
 
 number:
   - platform: template
@@ -307,7 +349,7 @@ button:
               lambda: 'return !id(manual_ean).state.empty();'
             then:
               - script.execute:
-                  id: send_scan
+                  id: enqueue_scan
                   ean: !lambda 'return id(manual_ean).state;'
 
   - platform: template
@@ -328,7 +370,6 @@ text_sensor:
     name: '${friendly_name} Last status'
     id: last_status
     icon: mdi:list-status
-  # BL-013: product info echoed in the scan response (ScanResponse.product) — no extra call.
   - platform: template
     name: '${friendly_name} Last product'
     id: last_product
@@ -342,20 +383,8 @@ text_sensor:
     id: search_result
     icon: mdi:magnify-scan
 
-globals:
-  - id: scan_buf
-    type: std::string
-    restore_value: no
-  - id: gm861_configuring
-    type: bool
-    restore_value: no
-    initial_value: 'true'
-  - id: awaiting_response
-    type: bool
-    restore_value: no
-    initial_value: 'false'
-
 interval:
+  # (1) GM861S UART reader: assemble bytes into an EAN, then enqueue a scan.
   - interval: 50ms
     then:
       - lambda: |-
@@ -372,8 +401,8 @@ interval:
               if (!id(scan_buf).empty()) {
                 std::string ean = id(scan_buf);
                 id(scan_buf).clear();
-                ESP_LOGD("scan", "barcode read from UART: %s", ean.c_str());
-                id(send_scan)->execute(ean);
+                ESP_LOGD("scan", "barcode read: %s", ean.c_str());
+                id(enqueue_scan)->execute(ean);
               }
             } else if (c >= 0x20 && c < 0x7f) {
               id(scan_buf).push_back((char) c);
@@ -381,7 +410,121 @@ interval:
             }
           }
 
+  # (2) Result drain: pop worker results and update the sensors + LED. nullptr body = failed/timed out -> red.
+  - interval: 50ms
+    then:
+      - lambda: |-
+          char *body = nullptr;
+          // --- scan results ---
+          while (id(scan_res_q) != nullptr && xQueueReceive(id(scan_res_q), &body, 0) == pdTRUE) {
+            std::string status = "unreachable";
+            std::string pname = "";
+            float pprice = -1.0f;
+            if (body != nullptr) {
+              json::parse_json(std::string(body), [&](JsonObject root) -> bool {
+                status = root["status"] | "error";
+                JsonObject prod = root["product"];
+                if (!prod.isNull()) {
+                  std::string brand = prod["brand"] | "";
+                  std::string label = prod["label"] | "";
+                  pname = brand.empty() ? label : (brand + " " + label);
+                  pprice = prod["price"] | -1.0f;
+                }
+                return true;
+              });
+              free(body);
+            }
+            ESP_LOGI("scan", "RESULT status=%s", status.c_str());
+            id(last_status).publish_state(status);
+            id(last_product).publish_state(pname);
+            if (pprice >= 0.0f) {
+              char pb[24];
+              snprintf(pb, sizeof(pb), "%.2f €", pprice);
+              id(last_price).publish_state(pb);
+            } else {
+              id(last_price).publish_state("—");
+            }
+            // Colour map (codes unchanged): green = added/duplicate, orange = lists-only/partial, red = rest.
+            if (status == "added" || status == "duplicate_ignored") id(show_result)->execute(0, 180, 0);
+            else if (status == "added_to_lists_only" || status == "partial") id(show_result)->execute(255, 185, 10);
+            else id(show_result)->execute(200, 0, 0);
+          }
+          // --- search results ---
+          while (id(search_res_q) != nullptr && xQueueReceive(id(search_res_q), &body, 0) == pdTRUE) {
+            std::string out = "aucun résultat";
+            if (body != nullptr) {
+              json::parse_json(std::string(body), [&](JsonObject root) -> bool {
+                JsonArray products = root["products"];
+                if (!products.isNull() && products.size() > 0) {
+                  std::string name = products[0]["name"] | "";
+                  float price = products[0]["price"]["default"] | -1.0f;
+                  char buf[160];
+                  if (price >= 0.0f) snprintf(buf, sizeof(buf), "%s — %.2f €", name.c_str(), price);
+                  else snprintf(buf, sizeof(buf), "%s", name.c_str());
+                  out = buf;
+                }
+                return true;
+              });
+              free(body);
+            }
+            id(search_result).publish_state(out);
+          }
+
 script:
+  # Show the in-flight WHITE, publish last_ean, then enqueue a job ('S' + EAN) -> worker POSTs /api/v1/scan.
+  - id: enqueue_scan
+    parameters:
+      ean: string
+    then:
+      - light.turn_on:
+          id: status_led
+          red: 100%
+          green: 100%
+          blue: 100%
+          brightness: ${led_brightness}
+      - lambda: |-
+          id(last_ean).publish_state(ean);
+          if (id(http_req_q) == nullptr) return;
+          char *j = (char *) malloc(ean.size() + 2);
+          if (j == nullptr) return;
+          j[0] = 'S';
+          memcpy(j + 1, ean.c_str(), ean.size() + 1);
+          if (xQueueSend(id(http_req_q), &j, 0) != pdTRUE) free(j);
+
+  # Push a keyword search to the worker ('Q' + query) -> GET /api/v1/search.
+  - id: enqueue_search
+    parameters:
+      q: string
+    then:
+      - lambda: |-
+          if (id(http_req_q) == nullptr) return;
+          char *j = (char *) malloc(q.size() + 2);
+          if (j == nullptr) return;
+          j[0] = 'Q';
+          memcpy(j + 1, q.c_str(), q.size() + 1);
+          if (xQueueSend(id(http_req_q), &j, 0) != pdTRUE) free(j);
+
+  # Show a result colour for ${feedback_ms} then turn off. mode: restart => the latest call wins (and
+  # cancels the in-flight white).
+  - id: show_result
+    mode: restart
+    parameters:
+      r: int
+      g: int
+      b: int
+    then:
+      - light.turn_on:
+          id: status_led
+          red: !lambda 'return r / 255.0f;'
+          green: !lambda 'return g / 255.0f;'
+          blue: !lambda 'return b / 255.0f;'
+          brightness: ${led_brightness}
+      - delay: ${feedback_ms}
+      - light.turn_off: status_led
+
+  # GM861S configuration over UART. Pushed at boot + on any number change / the "Apply" button. The bytes
+  # and registers are the scanner's protocol; CRC is skipped (0xAB 0xCD). gm861_configuring gates the UART
+  # reader so config echoes are not mistaken for barcodes.
   - id: apply_scanner_config
     mode: restart
     then:
@@ -405,34 +548,38 @@ script:
       - delay: 40ms
       - lambda: |-
           int v = (int) id(num_sensitivity).state;
-          if (v < 0) v = 0; if (v > 255) v = 255;
-          uint8_t f[9] = {0x7E,0x00,0x08,0x01,0x00,0x0F,(uint8_t)v,0xAB,0xCD};
+          if (v < 0) v = 0;
+          if (v > 255) v = 255;
+          uint8_t f[9] = {0x7E, 0x00, 0x08, 0x01, 0x00, 0x0F, (uint8_t) v, 0xAB, 0xCD};
           id(gm861_uart).write_array(f, 9);
       - delay: 40ms
       - lambda: |-
           float s = id(num_same_barcode_delay).state;
           uint8_t d;
           if (s <= 0.0f) d = 0x00;
-          else { int u = (int)(s*10.0f+0.5f); if (u > 0x7F) u = 0x7F; d = 0x80 | (uint8_t)u; }
-          uint8_t f[9] = {0x7E,0x00,0x08,0x01,0x00,0x13,d,0xAB,0xCD};
+          else { int u = (int) (s * 10.0f + 0.5f); if (u > 0x7F) u = 0x7F; d = 0x80 | (uint8_t) u; }
+          uint8_t f[9] = {0x7E, 0x00, 0x08, 0x01, 0x00, 0x13, d, 0xAB, 0xCD};
           id(gm861_uart).write_array(f, 9);
       - delay: 40ms
       - lambda: |-
-          int u = (int)(id(num_single_read_time).state*10.0f+0.5f);
-          if (u < 1) u = 1; if (u > 255) u = 255;
-          uint8_t f[9] = {0x7E,0x00,0x08,0x01,0x00,0x06,(uint8_t)u,0xAB,0xCD};
+          int u = (int) (id(num_single_read_time).state * 10.0f + 0.5f);
+          if (u < 1) u = 1;
+          if (u > 255) u = 255;
+          uint8_t f[9] = {0x7E, 0x00, 0x08, 0x01, 0x00, 0x06, (uint8_t) u, 0xAB, 0xCD};
           id(gm861_uart).write_array(f, 9);
       - delay: 40ms
       - lambda: |-
-          int u = (int)(id(num_break_time).state*10.0f+0.5f);
-          if (u < 0) u = 0; if (u > 255) u = 255;
-          uint8_t f[9] = {0x7E,0x00,0x08,0x01,0x00,0x05,(uint8_t)u,0xAB,0xCD};
+          int u = (int) (id(num_break_time).state * 10.0f + 0.5f);
+          if (u < 0) u = 0;
+          if (u > 255) u = 255;
+          uint8_t f[9] = {0x7E, 0x00, 0x08, 0x01, 0x00, 0x05, (uint8_t) u, 0xAB, 0xCD};
           id(gm861_uart).write_array(f, 9);
       - delay: 40ms
       - lambda: |-
-          int u = (int)(id(num_image_stab).state*10.0f+0.5f);
-          if (u < 0) u = 0; if (u > 255) u = 255;
-          uint8_t f[9] = {0x7E,0x00,0x08,0x01,0x00,0x04,(uint8_t)u,0xAB,0xCD};
+          int u = (int) (id(num_image_stab).state * 10.0f + 0.5f);
+          if (u < 0) u = 0;
+          if (u > 255) u = 255;
+          uint8_t f[9] = {0x7E, 0x00, 0x08, 0x01, 0x00, 0x04, (uint8_t) u, 0xAB, 0xCD};
           id(gm861_uart).write_array(f, 9);
       - delay: 60ms
       - lambda: |-
@@ -440,106 +587,3 @@ script:
           while (id(gm861_uart).available()) { id(gm861_uart).read_byte(&junk); }
           id(scan_buf).clear();
           id(gm861_configuring) = false;
-
-  # BL-014: the SINGLE owner of status_led — every LED state (in-flight white AND result colour) goes
-  # through this one script. mode: restart means a new call cancels the previous sequence (incl. a pending
-  # turn-off), so the LAST call wins: no overlapping/partial-channel writes, no ghost turn-off, no
-  # yellow/cyan blend. Never call light.turn_on/off on status_led from anywhere else.
-  #   off_after_ms > 0  → hold the colour that long, then turn off (result feedback)
-  #   off_after_ms == 0 → turn on and stay on (in-flight white, cleared by the next result call)
-  - id: set_led
-    mode: restart
-    parameters:
-      r: int
-      g: int
-      b: int
-      off_after_ms: int
-    then:
-      - light.turn_on:
-          id: status_led
-          red: !lambda 'return r / 255.0f;'
-          green: !lambda 'return g / 255.0f;'
-          blue: !lambda 'return b / 255.0f;'
-          brightness: ${led_brightness}
-      - if:
-          condition:
-            lambda: 'return off_after_ms > 0;'
-          then:
-            - delay: !lambda 'return off_after_ms;'
-            - light.turn_off: status_led
-
-  - id: send_scan
-    mode: restart
-    parameters:
-      ean: string
-    then:
-      - lambda: 'ESP_LOGD("scan", "send_scan START ean=%s", ean.c_str());'
-      # WHITE in-flight via the single LED owner (off_after_ms=0 → stays on until the result call), then a
-      # flush delay long enough for the light loop to push it to the LED BEFORE the blocking POST freezes
-      # the loop. (10 ms was shorter than one loop cycle, so the LED never updated.)
-      - script.execute:
-          id: set_led
-          r: 255
-          g: 255
-          b: 255
-          off_after_ms: 0
-      - lambda: 'ESP_LOGD("scan", "LED -> white (in-flight) ean=%s", ean.c_str());'
-      - delay: ${white_flush_ms}
-      - lambda: 'id(awaiting_response) = true;'
-      # BL-013/DECISION-028: the scan is now a key-guarded local-API endpoint (POST /api/v1/scan), like
-      # every other /api/v1 call. Same ScanResponse shape, so the LED mapping below is unchanged.
-      - http_request.post:
-          url: 'http://${server_host}:${server_port}/api/v1/scan'
-          capture_response: true
-          request_headers:
-            Content-Type: application/json
-            X-API-Key: '${local_api_key}'
-          json: |-
-            root["ean"] = ean;
-          on_response:
-            then:
-              - lambda: |-
-                  id(awaiting_response) = false;
-                  std::string status = "error";
-                  std::string pname = "";
-                  float pprice = -1.0f;
-                  json::parse_json(body, [&](JsonObject root) -> bool {
-                    status = root["status"] | "error";
-                    JsonObject prod = root["product"];
-                    if (!prod.isNull()) {
-                      std::string brand = prod["brand"] | "";
-                      std::string label = prod["label"] | "";
-                      pname = brand.empty() ? label : (brand + " " + label);
-                      pprice = prod["price"] | -1.0f;
-                    }
-                    return true;
-                  });
-                  ESP_LOGI("scan", "RESULT ean=%s status=%s http=%d", ean.c_str(), status.c_str(), response->status_code);
-                  id(last_ean).publish_state(ean);
-                  id(last_status).publish_state(status);
-                  // BL-013: surface the product info the scan response already carries.
-                  id(last_product).publish_state(pname);
-                  if (pprice >= 0.0f) { char pb[24]; snprintf(pb, sizeof(pb), "%.2f €", pprice); id(last_price).publish_state(pb); }
-                  else { id(last_price).publish_state("—"); }
-                  if (status == "added" || status == "duplicate_ignored") {
-                    id(set_led)->execute(0, 180, 0, ${feedback_ms});
-                  } else if (status == "added_to_lists_only" || status == "partial") {
-                    id(set_led)->execute(255, 185, 10, ${feedback_ms});
-                  } else {
-                    id(set_led)->execute(200, 0, 0, ${feedback_ms});
-                  }
-      - if:
-          condition:
-            lambda: 'return id(awaiting_response);'
-          then:
-            - lambda: |-
-                id(awaiting_response) = false;
-                ESP_LOGW("scan", "NO RESPONSE (unreachable) ean=%s", ean.c_str());
-                id(last_ean).publish_state(ean);
-                id(last_status).publish_state("unreachable");
-            - script.execute:
-                id: set_led
-                r: 200
-                g: 0
-                b: 0
-                off_after_ms: ${feedback_ms}
