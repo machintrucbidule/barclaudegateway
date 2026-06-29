@@ -59,7 +59,7 @@ substitutions:
 
   # --- Timing ---
   http_timeout: '8s'
-  feedback_ms: '1500' # how long the LED holds the result colour, in ms (passed as an int to set_led)
+  feedback_ms: '1500ms' # how long the LED holds the result colour (an ESPHome duration; used by set_led)
   white_flush_ms: '100ms' # let the light loop push WHITE to the LED before the blocking POST
 
   # ---------------------------------------------------------------------------
@@ -445,15 +445,15 @@ script:
   # through this one script. mode: restart means a new call cancels the previous sequence (incl. a pending
   # turn-off), so the LAST call wins: no overlapping/partial-channel writes, no ghost turn-off, no
   # yellow/cyan blend. Never call light.turn_on/off on status_led from anywhere else.
-  #   off_after_ms > 0  → hold the colour that long, then turn off (result feedback)
-  #   off_after_ms == 0 → turn on and stay on (in-flight white, cleared by the next result call)
+  #   hold == true  → show the colour for ${feedback_ms}, then turn off (result feedback)
+  #   hold == false → turn on and stay on (in-flight white, cleared by the next result call)
   - id: set_led
     mode: restart
     parameters:
       r: int
       g: int
       b: int
-      off_after_ms: int
+      hold: bool
     then:
       - light.turn_on:
           id: status_led
@@ -463,9 +463,9 @@ script:
           brightness: ${led_brightness}
       - if:
           condition:
-            lambda: 'return off_after_ms > 0;'
+            lambda: 'return hold;'
           then:
-            - delay: !lambda 'return off_after_ms;'
+            - delay: ${feedback_ms}
             - light.turn_off: status_led
 
   - id: send_scan
@@ -474,7 +474,7 @@ script:
       ean: string
     then:
       - lambda: 'ESP_LOGD("scan", "send_scan START ean=%s", ean.c_str());'
-      # WHITE in-flight via the single LED owner (off_after_ms=0 → stays on until the result call), then a
+      # WHITE in-flight via the single LED owner (hold=false → stays on until the result call), then a
       # flush delay long enough for the light loop to push it to the LED BEFORE the blocking POST freezes
       # the loop. (10 ms was shorter than one loop cycle, so the LED never updated.)
       - script.execute:
@@ -482,7 +482,7 @@ script:
           r: 255
           g: 255
           b: 255
-          off_after_ms: 0
+          hold: false
       - lambda: 'ESP_LOGD("scan", "LED -> white (in-flight) ean=%s", ean.c_str());'
       - delay: ${white_flush_ms}
       - lambda: 'id(awaiting_response) = true;'
@@ -522,11 +522,11 @@ script:
                   if (pprice >= 0.0f) { char pb[24]; snprintf(pb, sizeof(pb), "%.2f €", pprice); id(last_price).publish_state(pb); }
                   else { id(last_price).publish_state("—"); }
                   if (status == "added" || status == "duplicate_ignored") {
-                    id(set_led)->execute(0, 180, 0, ${feedback_ms});
+                    id(set_led)->execute(0, 180, 0, true);
                   } else if (status == "added_to_lists_only" || status == "partial") {
-                    id(set_led)->execute(255, 185, 10, ${feedback_ms});
+                    id(set_led)->execute(255, 185, 10, true);
                   } else {
-                    id(set_led)->execute(200, 0, 0, ${feedback_ms});
+                    id(set_led)->execute(200, 0, 0, true);
                   }
       - if:
           condition:
@@ -542,4 +542,4 @@ script:
                 r: 200
                 g: 0
                 b: 0
-                off_after_ms: ${feedback_ms}
+                hold: true

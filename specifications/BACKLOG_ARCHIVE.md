@@ -29,19 +29,24 @@
   auto-off. `send_scan` is `mode: restart`, fired from several sources, so writes/clears overlapped and
   channels blended (white−blue = yellow; green + leftover blue = cyan).
 - **What was actually done** (`firmware/esphome/barclaude-scanner.yaml`):
-  - Made **`set_led` the sole LED writer**, parameterised for every state. It now takes
-    `off_after_ms: int`: `light.turn_on` full R/G/B at `brightness: ${led_brightness}` instantly, then
-    `if off_after_ms > 0` → `delay <off_after_ms>` + `light.turn_off`. `mode: restart` means a new call
-    cancels the previous sequence (incl. a pending turn-off) → **last call wins**, no overlap, no ghost
-    turn-off. Every write sets the full R/G/B (no partial-channel writes).
+  - Made **`set_led` the sole LED writer**, parameterised for every state. It takes a **`hold: bool`**:
+    `light.turn_on` full R/G/B at `brightness: ${led_brightness}` instantly, then `if hold` →
+    `delay: ${feedback_ms}` + `light.turn_off`. `mode: restart` means a new call cancels the previous
+    sequence (incl. a pending turn-off) → **last call wins**, no overlap, no ghost turn-off. Every write
+    sets the full R/G/B (no partial-channel writes).
   - **Removed the second LED owner** in `send_scan`: deleted the `script.stop: set_led` + the inline white
-    `light.turn_on` block; the in-flight white is now `set_led(255,255,255, 0)` (stays on until the result
-    call). Kept the one `${white_flush_ms}` yield so the strip flushes white before the blocking POST.
-  - Result calls (and the no-response branch) pass `${feedback_ms}` as the 4th arg: green
-    `set_led(0,180,0, ${feedback_ms})`, orange `(255,185,10, …)`, red `(200,0,0, …)`.
+    `light.turn_on` block; the in-flight white is now `set_led(255,255,255, false)` (stays on until the
+    result call). Kept the one `${white_flush_ms}` yield so the strip flushes white before the blocking POST.
+  - Result calls (and the no-response branch) pass `hold=true`: green `set_led(0,180,0, true)`, orange
+    `(255,185,10, true)`, red `(200,0,0, true)`.
   - Added a **`led_brightness`** substitution (default `'50%'`) — single source of truth for LED brightness
-    (was hard-coded `brightness: 50%` in two places). `feedback_ms` is now a plain int of ms (`'1500'`),
-    consumed by `set_led`'s int param.
+    (was hard-coded `brightness: 50%` in two places). `feedback_ms` stays an ESPHome **duration** (`'1500ms'`),
+    consumed by `set_led`'s `delay:` — never injected into a C++ lambda as a literal.
+  - **Compile fix (post-flash)**: the first cut passed `${feedback_ms}` as an `int` arg inside the
+    `id(set_led)->execute(...)` lambda; with `feedback_ms` written as a duration (`'1500ms'`) this expanded
+    to `1500ms` in C++ → `error: unable to find numeric literal operator 'operator""ms'`. Switching to the
+    `hold: bool` form (duration consumed only by `delay:`) makes it robust regardless of how `feedback_ms`
+    is written.
   - **No** optional local debounce (user's choice): the GM861S reg 0x0013 same-barcode delay already covers
     double-reads; the single-owner refactor alone removes the artefacts.
   - Docs: `docs/esphome-contract.md` gained a "Single-owner LED (BL-014)" note. A **refinement of
