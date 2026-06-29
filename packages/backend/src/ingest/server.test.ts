@@ -93,6 +93,8 @@ describe('ingest server (fastify.inject)', () => {
     // These tests predate BL-006 and assert the connect-on-read /health behaviour → pin keep-alive
     // (a fresh DB would otherwise seed `lazy` and gate /health into the idle state).
     configStore.set(CONFIG_KEYS.authMode, 'keepalive');
+    // BL-013: the scan now lives on the key-guarded local API (`POST /api/v1/scan`).
+    configStore.set(CONFIG_KEYS.localApiKey, 'KEY');
     const destinations = new DestinationsStore(configStore);
     destinations.write({ cart: true, lists: [] });
     const scanLog = new ScanLog(db);
@@ -158,7 +160,9 @@ describe('ingest server (fastify.inject)', () => {
     setGlobalDispatcher(original);
   });
 
-  it('POST /v1/scan with a valid EAN → 200 and a ScanResponse', async () => {
+  const KEY_HEADERS = { 'x-api-key': 'KEY' };
+
+  it('POST /api/v1/scan with a valid EAN → 200 and a ScanResponse', async () => {
     pool
       .intercept({ path: pathIs('/v1/search-suggestions'), method: 'GET' })
       .reply(200, { products: [product] });
@@ -169,7 +173,12 @@ describe('ingest server (fastify.inject)', () => {
       .intercept({ path: pathIs('/v1/carts/CART-1/items'), method: 'POST' })
       .reply(200, { content: [{ productId: '2555', quantity: 1, returnType: 'SUCCESS' }] });
 
-    const res = await app.inject({ method: 'POST', url: '/v1/scan', payload: { ean: EAN } });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/scan',
+      headers: KEY_HEADERS,
+      payload: { ean: EAN },
+    });
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ status: 'added', ean: EAN, product: { id: '2555' } });
@@ -188,19 +197,24 @@ describe('ingest server (fastify.inject)', () => {
     ]);
   });
 
-  it('POST /v1/scan with an invalid EAN → 400 invalid_ean, Chronodrive untouched', async () => {
+  it('POST /api/v1/scan with an invalid EAN → 400 invalid_ean, Chronodrive untouched', async () => {
     // No interceptors registered: if the pipeline called Chronodrive the test would error.
-    const res = await app.inject({ method: 'POST', url: '/v1/scan', payload: { ean: '123' } });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/scan',
+      headers: KEY_HEADERS,
+      payload: { ean: '123' },
+    });
 
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({ status: 'invalid_ean', ean: '123' });
   });
 
-  it('POST /v1/scan with malformed JSON → 400 invalid_ean', async () => {
+  it('POST /api/v1/scan with malformed JSON → 400 invalid_ean', async () => {
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/scan',
-      headers: { 'content-type': 'application/json' },
+      url: '/api/v1/scan',
+      headers: { 'content-type': 'application/json', ...KEY_HEADERS },
       payload: '{ not valid json',
     });
 
@@ -208,13 +222,28 @@ describe('ingest server (fastify.inject)', () => {
     expect(res.json()).toMatchObject({ status: 'invalid_ean' });
   });
 
-  it('POST /v1/scan when Chronodrive fails → 502 error with category', async () => {
+  it('POST /api/v1/scan when Chronodrive fails → 502 error with category', async () => {
     pool.intercept({ path: pathIs('/v1/search-suggestions'), method: 'GET' }).reply(500, {});
 
-    const res = await app.inject({ method: 'POST', url: '/v1/scan', payload: { ean: EAN } });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/scan',
+      headers: KEY_HEADERS,
+      payload: { ean: EAN },
+    });
 
     expect(res.statusCode).toBe(502);
     expect(res.json()).toMatchObject({ status: 'error', category: 'server' });
+  });
+
+  it('POST /api/v1/scan without the X-API-Key → 401 (BL-013/DECISION-028)', async () => {
+    const res = await app.inject({ method: 'POST', url: '/api/v1/scan', payload: { ean: EAN } });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('the old keyless POST /v1/scan is gone → 404 (BL-013/DECISION-028)', async () => {
+    const res = await app.inject({ method: 'POST', url: '/v1/scan', payload: { ean: EAN } });
+    expect(res.statusCode).toBe(404);
   });
 
   it('GET /health → 200 when every read-only check passes', async () => {

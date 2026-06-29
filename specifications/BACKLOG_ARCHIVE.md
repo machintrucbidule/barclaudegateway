@@ -6,7 +6,57 @@
 >
 > Newest entries on top. Nothing here is active work — the active backlog is [`BACKLOG.md`](./BACKLOG.md).
 >
-> Last updated: 2026-06-28 (BATCH-10 — BL-012 in-gateway price tracking & HA alerts + a UI page, DECISION-026. NB: DECISION-027 — BATCH-7..11 are ONE user-triggered **0.3.0** release; no per-batch version bumps.)
+> Last updated: 2026-06-29 (BATCH-11 — BL-013 wiring/ops/firmware/docs, DECISION-028. **The DECISION-022
+> Layer-B epic (BATCH-7..11) is complete.** NB: DECISION-027 — the whole epic is ONE user-triggered
+> **0.3.0** release; no per-batch version bumps.)
+
+---
+
+## BATCH-11 — Wiring, ops, ESPHome/HA YAML, docs & full tests (P2) — shipped 2026-06-29
+
+> Developed via loop prompt 2 on branch `feature/batch-7-local-api-foundation` (part of the single
+> user-triggered **0.3.0** release, DECISION-027). The **final** batch of the DECISION-022 Layer-B epic:
+> make the surface usable + documented, rebase the reference firmware on Ivan's actual YAML, and prove
+> lazy/keepalive. Recorded as **DECISION-028**. With it, the backlog is empty.
+
+### [BL-013] Surface config (key), consolidate the scan onto the local API, update ESPHome/HA YAML, docs, full tests
+
+- Type: Evolution · Priority: P2 · Batch: BATCH-11 · Source: user remark (2026-06-28)
+- **Date shipped**: 2026-06-29
+- **Approved design decisions (DECISION-028, user's choices)**: the **scan moves onto the local API**
+  (`POST /api/v1/scan`, key-guarded — *"le scan doit fonctionner comme les autres endpoints, … api key"*);
+  the config-page key gets a **read-only display + a Régénérer button**; the two new HA functions are
+  **product-info-on-scan** + **keyword search**.
+- **What was actually done**:
+  - **Scan consolidation** (the one intentional breaking change, DECISION-027-compliant): moved the scan
+    handler from `ingest/server.ts` into `localApiRoutes` as `POST /api/v1/scan` (behind the `X-API-Key`
+    guard); **removed the keyless `POST /v1/scan`** (now 404). Self-contained handler (validation +
+    `pipeline.handle` always return a `ScanResponse`); the error handler maps a malformed scan body to
+    `invalid_ean`. `LocalApiDeps` gained `pipeline`. The `ScanResponse` shape is **unchanged**.
+  - **Key surface**: additive `GET /api/local-api-key` + `POST /api/local-api-key/regenerate`
+    (`bootstrap.generateLocalApiKey` factored out); a Config-page **"API locale"** card (read-only key +
+    base URL `window.location.origin + /api/v1` + copy + a guarded **Régénérer**). The key stays out of
+    `GET/PUT /api/config` (DECISION-023).
+  - **Firmware** (`firmware/esphome/barclaude-scanner.yaml`): **rebased on Ivan's actual YAML** (white-flush
+    timing fix, GM861S config exposed as HA numbers, `logger` buffer); scan URL → `/api/v1/scan` + the
+    `X-API-Key` header (`local_api_key` substitution); new `last_product`/`last_price` sensors from
+    `ScanResponse.product`; a **Search** text → `GET /api/v1/search?q=` → `search_result` sensor;
+    `"aaa"` placeholders replaced with `!secret …`.
+  - **Docs**: `docs/esphome-contract.md` (URL + `X-API-Key` + the new HA functions), `README.md` (Local
+    API section + status refresh), `docs/deployment.md` (Local API integration), `api/local/contract.md`
+    (§5.0b `POST /api/v1/scan`).
+  - **lazy/keepalive verified**: the `/api/v1/*` endpoints log in on demand (no lazy gate, no background
+    poll); a gated-timer test confirms the price scheduler stays off by default.
+- **Acceptance criteria — met**: the Config page exposes the key (read-only) + base URL + regenerate; the
+  firmware (from Ivan's) calls the local API for scan + search with the key and adds the HA functions; both
+  APIs communicate; the full suite is green; docs current; lazy/keep-alive behave per DECISION-021.
+- **Tests** (all green: **245** total — 220 backend + 25 frontend; ~7 new): `server.test.ts` (scan via
+  `/api/v1/scan` + key, 401 without key, old `/v1/scan` → 404); `apiRoutes.test.ts` (key get/regenerate);
+  `priceScheduler.test.ts` (gated timer); `ConfigPage.test.tsx` (Local API card + regenerate).
+  Lint/typecheck/format/build green.
+- **Docs/specs**: `decisions.md` (DECISION-028), `PROJECT_CONTEXT.md`. **No app-version bump** — part of the
+  single 0.3.0 epic (DECISION-027). Upstream `contract.md` unchanged.
+- **Commit/PR**: branch `feature/batch-7-local-api-foundation` (loop prompt 2, 2026-06-29).
 
 ---
 

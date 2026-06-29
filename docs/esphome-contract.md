@@ -20,15 +20,20 @@ LED (no buzzer).
 ## Request
 
 ```
-POST http://<middleware-host>:8090/v1/scan
+POST http://<middleware-host>:8090/api/v1/scan
 Content-Type: application/json
+X-API-Key: <local-api-key>
 
 { "ean": "3183280000933" }
 ```
 
 - `ean` — the raw barcode string from the scanner (EAN-8, UPC-A or EAN-13). The middleware trims
   whitespace, validates the length and the GS1 check digit, and normalises UPC-A to EAN-13.
-- No authentication (local-only network behind a Cloudflare Tunnel).
+- **`X-API-Key` is required** (BL-013/DECISION-028). The scan is now a normal local-API endpoint
+  (`/api/v1/scan`), guarded like every `/api/v1/*` call — it **moved** from the old keyless `POST /v1/scan`
+  (which now returns 404). Get the auto-generated key from the web UI (**Config → API locale**) or the boot
+  log, and set it on the firmware (`local_api_key` substitution). A missing/wrong key → **401** (the
+  firmware shows red). The `ScanResponse` shape below is **unchanged**.
 
 ## Response
 
@@ -109,12 +114,20 @@ Per-destination outcome, useful for logging/diagnostics:
 The reference firmware also exposes itself to Home Assistant (encrypted API), so a scan can be driven —
 and observed — without the physical scanner:
 
-- **Manual EAN** (`text`) — type/set an EAN; it is pushed through the **same** `POST /v1/scan` pipeline
-  as a physical scan (same `ScanResponse`, same LED feedback).
+- **Manual EAN** (`text`) — type/set an EAN; it is pushed through the **same** `POST /api/v1/scan`
+  pipeline as a physical scan (same `ScanResponse`, same LED feedback).
 - **Resend EAN** (`button`) — re-sends the current Manual EAN even if unchanged.
 - **Last EAN** / **Last status** (`text_sensor`) — the last processed EAN and the last `status` string,
-  updated by both physical scans and manual sends (handy for dashboards/automations and for confirming
-  what the middleware returned).
+  updated by both physical scans and manual sends.
+
+### Local-API HA functions (BL-013)
+
+These use the local API (`/api/v1/*`, `X-API-Key`) — additive, the scan flow above is unchanged:
+
+- **Last product** / **Last price** (`text_sensor`) — populated from the `product` block already in the
+  `ScanResponse` of each scan (no extra request): the brand + label, and the price.
+- **Search** (`text`) — type a keyword; the firmware calls `GET /api/v1/search?q=<keyword>` (with the
+  `X-API-Key`) and publishes the first result's "name — price" to the **Search result** `text_sensor`.
 
 ---
 

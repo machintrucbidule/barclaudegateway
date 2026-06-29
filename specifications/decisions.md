@@ -2,7 +2,7 @@
 
 > Decisions are added here as they are resolved. Each entry records: the question, the options considered, the choice made, and who decided.
 > All Phase 0 functional clarifications (CLARIFY-_) and architecture decisions (DECISION-_) are now resolved.
-> Last updated: 2026-06-28 (DECISION-027 — the Layer-B epic is ONE user-triggered **0.3.0** release (no per-batch bumps; 0.4/0.5/0.6 reverted) + the internal/exposed contracts are stability-first: adapt the wiring, not the exposed API, unless unavoidable + user warned)
+> Last updated: 2026-06-29 (DECISION-028 — BATCH-11 final: the scan moves onto the local API (`POST /api/v1/scan`, key-guarded; old `/v1/scan` removed), config-page key card + regenerate, two HA firmware functions, firmware rebased on Ivan's YAML; **the DECISION-022 Layer-B epic is complete**. No version bump — still 0.3.0, DECISION-027)
 
 ---
 
@@ -878,6 +878,44 @@
 - **Scope**: process/policy — no code behaviour. Traced here, in the three exposed contracts (a
   "Stability & compatibility policy" note), in `PROJECT_CONTEXT.md`, and in the agent's persistent memory so
   it binds future contexts. Applies retroactively (the version revert) and to all future batches.
+
+---
+
+### [DECISION-028] Wiring, ops & firmware: scan consolidated onto the local API (BATCH-11 / BL-013)
+
+- **Date**: 2026-06-29
+- **Question**: the final epic batch — make the local API usable + observable + documented, update the
+  reference ESPHome firmware (from Ivan's actual YAML), and prove lazy/keepalive is preserved.
+- **Decisions** (user, explicit):
+  - **The scan moved onto the local API: `POST /api/v1/scan`, key-guarded** (user: *"le scan doit
+    fonctionner comme les autres endpoints, … api key, etc."*). The old keyless `POST /v1/scan` is
+    **removed** (now 404). The `ScanResponse` shape is **unchanged** (the firmware's LED mapping depends on
+    it); only the URL + the `X-API-Key` requirement changed. The handler moved from `ingest/server.ts` into
+    `localApiRoutes` (behind the existing guard), self-contained so it always returns a parseable
+    `ScanResponse` (the error handler maps a malformed scan body to `invalid_ean`). This is the **one
+    intentional breaking change** of the epic — **DECISION-027-compliant**: the user requested it and the
+    only client (the ESP firmware) is rewritten in this same batch, so no *extra* peripheral churn.
+  - **Config-page key surface**: a read-only "API locale" card shows the auto-managed key + the base URL
+    (`window.location.origin + /api/v1`) with copy, **plus a "Régénérer" button** (the user's choice) that
+    rotates the key (warning: it invalidates existing clients). Backed by additive `GET /api/local-api-key`
+    + `POST /api/local-api-key/regenerate` (the key still never appears in `GET/PUT /api/config`,
+    DECISION-023 intact).
+  - **Two new HA firmware functions** (user's pick): **product info on scan** (publish the
+    `ScanResponse.product` label/brand/price to HA sensors — no extra call) and **keyword search** (an HA
+    text → `GET /api/v1/search?q=` → first result to a sensor). The firmware was **rebased on Ivan's actual
+    YAML** (white-flush fix, GM861S config numbers), with the scan URL/key change + `!secret` placeholders.
+  - **lazy/keepalive (DECISION-021) preserved**: the `/api/v1/*` endpoints log in on demand via
+    `getToken` (no lazy gate added, no background poll); the only background task — the price scheduler — is
+    opt-in/off by default (verified by a gated-timer test).
+- **Decided by**: User (Ivan) — the scan consolidation + the "regenerate" button + the two HA functions
+  chosen explicitly.
+- **Rationale**: one consistent, key-guarded local surface (scan included) is simpler to consume and
+  document than a bespoke keyless endpoint; surfacing/rotating the key in the UI makes the key usable;
+  rebasing on the real YAML keeps the reference firmware honest. Upstream `contract.md` UNCHANGED. **No
+  app-version bump** (DECISION-027 — the whole epic is one user-triggered 0.3.0).
+- **Shipped in**: BATCH-11 (loop prompt 2, 2026-06-29) on `feature/batch-7-local-api-foundation`. **This
+  completes the DECISION-022 Layer-B epic (BATCH-7..11)**; `BACKLOG.md` is now empty. Full entry in
+  `BACKLOG_ARCHIVE.md`.
 
 ---
 

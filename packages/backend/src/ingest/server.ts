@@ -1,28 +1,26 @@
 /**
- * Fastify HTTP server exposing the ingestion endpoint to the ESP32/ESPHome scanner (DECISION-009).
+ * Fastify HTTP server (DECISION-009). Routes:
+ *  - `POST /api/v1/scan` — the scanner ingestion (BL-013/DECISION-028): validate the EAN, run the
+ *    {@link IngestPipeline}, answer synchronously with a rich {@link ScanResponse} (the firmware drives
+ *    its LED from `status`). It lives in the key-guarded local API ({@link localApiRoutes}); the HTTP
+ *    code is secondary (200 business outcomes, 400 malformed, 502 upstream failure).
+ *  - `GET /health` — the read-only self-test (contract.md §7.1), reused from Phase 2; `GET /livez` the
+ *    container liveness probe.
  *
- * Two routes:
- *  - `POST /v1/scan` — validate the EAN, run the {@link IngestPipeline}, answer synchronously with a
- *    rich {@link ScanResponse}. The firmware drives its LED + buzzer from `status` first; the HTTP
- *    code is secondary (200 for business outcomes, 400 for a malformed barcode, 502 for an upstream
- *    Chronodrive failure).
- *  - `GET /health` — the read-only self-test (contract.md §7.1), reused from Phase 2.
- *
- * No application auth: the service is local-only behind a Cloudflare Tunnel (PROJECT_CONTEXT). Request
- * bodies carry only an EAN (not a secret); Fastify's default logging never logs bodies.
+ * The local API is guarded by `X-API-Key`; the UI `/api/*` and `/health`/`/livez` are local-only behind a
+ * Cloudflare Tunnel (PROJECT_CONTEXT). Fastify's default logging never logs bodies.
  */
 
 import { existsSync } from 'node:fs';
 import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { ScanResponse, ScanStatus } from '@barclaudegateway/shared';
+import type { ScanResponse } from '@barclaudegateway/shared';
 import { runHealthSelfTest } from '../health/selfTest.js';
 import { redactLogObject } from '../logging/redact.js';
 import { apiRoutes } from '../http/apiRoutes.js';
 import type { ApiDeps } from '../http/apiRoutes.js';
 import { localApiRoutes } from '../http/localApiRoutes.js';
-import { validateEan } from './ean.js';
 import type { IngestPipeline } from './pipeline.js';
 
 export interface ServerDeps extends ApiDeps {
@@ -40,18 +38,6 @@ export interface ServerOptions {
   logger?: boolean;
 }
 
-/** Map a scan status to its HTTP code. Business outcomes are 200; only failures break out of 2xx. */
-function statusToHttp(status: ScanStatus): number {
-  switch (status) {
-    case 'invalid_ean':
-      return 400;
-    case 'error':
-      return 502;
-    default:
-      return 200;
-  }
-}
-
 export function buildServer(deps: ServerDeps, options: ServerOptions = {}): FastifyInstance {
   // Defense in depth (contract.md §8): every log record is deep-redacted via `redactLogObject`, so a
   // secret in any logged structure (headers, bodies, serialized errors) is masked even if a caller
@@ -61,32 +47,26 @@ export function buildServer(deps: ServerDeps, options: ServerOptions = {}): Fast
     logger: (options.logger ?? false) ? { formatters: { log: redactLogObject } } : false,
   });
 
-  // Error shaping is endpoint-specific: the scanner endpoints always get a parseable ScanResponse
-  // (the firmware drives its LED/buzzer from `status`), while the `/api` UI routes get plain JSON.
+  // Error shaping is endpoint-specific: the scan endpoint always gets a parseable ScanResponse (the
+  // firmware drives its LED from `status`), while every other `/api` route gets plain JSON. The scan is
+  // now `POST /api/v1/scan` (BL-013/DECISION-028), so it must be matched BEFORE the generic `/api` branch.
   app.setErrorHandler((error: FastifyError, request: FastifyRequest, reply: FastifyReply) => {
     const statusCode = error.statusCode ?? 500;
-    if (request.url.startsWith('/api')) {
-      reply.code(statusCode >= 400 ? statusCode : 500).send({ error: error.message });
+    if (request.url.startsWith('/api/v1/scan')) {
+      // Malformed JSON never reaches the scan handler — normalise it to `invalid_ean` so the firmware
+      // always receives a ScanResponse it can parse.
+      const body: ScanResponse =
+        statusCode >= 400 && statusCode < 500
+          ? {
+              status: 'invalid_ean',
+              ean: '',
+              message: 'Malformed request body (expected JSON { "ean": "..." })',
+            }
+          : { status: 'error', ean: '', category: 'unknown', message: 'Internal error' };
+      reply.code(statusCode >= 400 && statusCode < 500 ? 400 : 502).send(body);
       return;
     }
-    // Malformed JSON / unsupported content-type never reaches the scan handler — normalise it to our
-    // own `invalid_ean` shape so the firmware always receives a ScanResponse it can parse.
-    if (statusCode >= 400 && statusCode < 500) {
-      const body: ScanResponse = {
-        status: 'invalid_ean',
-        ean: '',
-        message: 'Malformed request body (expected JSON { "ean": "..." })',
-      };
-      reply.code(400).send(body);
-      return;
-    }
-    const body: ScanResponse = {
-      status: 'error',
-      ean: '',
-      category: 'unknown',
-      message: 'Internal error',
-    };
-    reply.code(500).send(body);
+    reply.code(statusCode >= 400 ? statusCode : 500).send({ error: error.message });
   });
 
   // Phase 4 local-UI API (reuses the Phase 3 stores). Registered before static so `/api/*` always
@@ -113,7 +93,8 @@ export function buildServer(deps: ServerDeps, options: ServerOptions = {}): Fast
 
   // Local "Layer B" API (BL-008). Its own versioned prefix + encapsulated X-API-Key guard; mounted
   // before static so `/api/v1/*` resolves to a handler, never the SPA fallback. The guard hook lives
-  // inside this plugin, so `POST /v1/scan` and the UI `/api/*` routes are unaffected.
+  // inside this plugin, so the UI `/api/*` routes are unaffected. The scanner ingestion now lives here
+  // too — `POST /api/v1/scan`, key-guarded (BL-013/DECISION-028) — so it takes the `pipeline`.
   void app.register(localApiRoutes, {
     prefix: '/api/v1',
     deps: {
@@ -122,26 +103,8 @@ export function buildServer(deps: ServerDeps, options: ServerOptions = {}): Fast
       chronodrive: deps.chronodrive,
       priceTracking: deps.priceTracking,
       priceScheduler: deps.priceScheduler,
+      pipeline: deps.pipeline,
     },
-  });
-
-  app.post('/v1/scan', async (request, reply) => {
-    const body = request.body as { ean?: unknown } | undefined;
-    const rawEan = typeof body?.ean === 'string' ? body.ean : '';
-
-    const validation = validateEan(body?.ean);
-    if (!validation.ok || validation.normalized === undefined) {
-      const response: ScanResponse = {
-        status: 'invalid_ean',
-        ean: rawEan,
-        message: validation.error,
-      };
-      reply.code(400).send(response);
-      return;
-    }
-
-    const response = await deps.pipeline.handle(validation.normalized);
-    reply.code(statusToHttp(response.status)).send(response);
   });
 
   app.get('/health', async (_request, reply) => {

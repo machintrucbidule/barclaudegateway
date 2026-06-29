@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Database } from '../storage/db.js';
 import { openDatabase } from '../storage/db.js';
 import { PriceTrackingStore } from '../storage/priceTracking.js';
@@ -96,5 +96,51 @@ describe('PriceScheduler.runOnce', () => {
     const summary = await ctx.scheduler.runOnce();
     expect(summary).toEqual({ checked: 0, alerts: 0 });
     expect(ctx.store.get('P1')?.lastPrice).toBeNull();
+  });
+});
+
+describe('PriceScheduler gating (lazy/keepalive compatibility, DECISION-021/027)', () => {
+  it('arms the periodic timer only when enabled — off by default never polls', () => {
+    vi.useFakeTimers();
+    const db = openDatabase(':memory:');
+    let calls = 0;
+    const settings = { enabled: false, intervalHours: 6 };
+    const store = new PriceTrackingStore(db);
+    store.add({ productId: 'P1', threshold: 1.5 });
+    const scheduler = new PriceScheduler({
+      chronodrive: {
+        getProduct: async (id: string) => {
+          calls += 1;
+          return { id, labels: {}, eans: [], prices: { defaultPrice: 2 } };
+        },
+      },
+      store,
+      notifier: { notifyPriceDrop: async () => ({ ok: true }) },
+      configStore: {
+        readAppConfig: (): AppConfig => ({
+          ...DEFAULT_APP_CONFIG,
+          priceTrackingEnabled: settings.enabled,
+          priceTrackingIntervalHours: settings.intervalHours,
+        }),
+      },
+      emit: () => {},
+      now: () => 1_000,
+    });
+    try {
+      // Disabled (the default): advancing well past any interval triggers no upstream call.
+      scheduler.start();
+      vi.advanceTimersByTime(24 * 60 * 60 * 1_000);
+      expect(calls).toBe(0);
+
+      // Enabled via the settings endpoint → applyConfig arms the timer; it fires after the interval.
+      settings.enabled = true;
+      scheduler.applyConfig();
+      vi.advanceTimersByTime(7 * 60 * 60 * 1_000);
+      expect(calls).toBeGreaterThan(0);
+    } finally {
+      scheduler.stop();
+      vi.useRealTimers();
+      db.close();
+    }
   });
 });

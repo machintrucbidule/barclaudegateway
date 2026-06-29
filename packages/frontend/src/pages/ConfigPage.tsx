@@ -5,6 +5,7 @@ import {
   Button,
   Card,
   Checkbox,
+  CopyButton,
   Group,
   Loader,
   PasswordInput,
@@ -588,6 +589,115 @@ function ConnectionModeSection(): JSX.Element {
   );
 }
 
+/**
+ * BL-013: the auto-managed local API key (read-only — copy it into your local clients' `X-API-Key`
+ * header) + the base URL, plus a guarded "regenerate" that rotates the key (and warns it invalidates
+ * existing clients). The key is never editable here (DECISION-023) — only displayed and rotated.
+ */
+function LocalApiSection(): JSX.Element {
+  const [key, setKey] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+  const baseUrl = `${window.location.origin}/api/v1`;
+
+  useEffect(() => {
+    let active = true;
+    void (async (): Promise<void> => {
+      try {
+        const r = await api.getLocalApiKey();
+        if (active) setKey(r.key);
+      } catch (e) {
+        if (active) setError(e instanceof Error ? e.message : 'Chargement impossible');
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const regenerate = async (): Promise<void> => {
+    setRegenerating(true);
+    try {
+      const r = await api.regenerateLocalApiKey();
+      setKey(r.key);
+      setConfirming(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Régénération impossible');
+    } finally {
+      setRegenerating(false);
+    }
+  };
+
+  return (
+    <Card withBorder>
+      <Stack gap="xs">
+        <Title order={4}>API locale</Title>
+        <Text size="sm" c="dimmed">
+          Clé à placer dans l&apos;en-tête <strong>X-API-Key</strong> de vos clients locaux
+          (firmware du scanner, macronome). Gérée par l&apos;application — non modifiable ici.
+        </Text>
+        {error && <Alert color="red">{error}</Alert>}
+        <Group align="flex-end" gap="xs">
+          <TextInput
+            label="Clé API locale (X-API-Key)"
+            readOnly
+            value={key ?? ''}
+            style={{ flex: 1 }}
+          />
+          <CopyButton value={key ?? ''}>
+            {({ copied, copy }) => (
+              <Button variant="default" onClick={copy} disabled={!key}>
+                {copied ? 'Copié' : 'Copier'}
+              </Button>
+            )}
+          </CopyButton>
+        </Group>
+        <Group align="flex-end" gap="xs">
+          <TextInput
+            label="URL de base de l'API locale"
+            readOnly
+            value={baseUrl}
+            style={{ flex: 1 }}
+          />
+          <CopyButton value={baseUrl}>
+            {({ copied, copy }) => (
+              <Button variant="default" onClick={copy}>
+                {copied ? 'Copié' : 'Copier'}
+              </Button>
+            )}
+          </CopyButton>
+        </Group>
+        {!confirming ? (
+          <Button
+            color="orange"
+            variant="light"
+            w="fit-content"
+            onClick={() => setConfirming(true)}
+          >
+            Régénérer la clé
+          </Button>
+        ) : (
+          <Alert color="orange">
+            <Text size="sm">
+              Régénérer la clé invalide tous les clients existants (firmware, macronome) : ils
+              devront être reconfigurés avec la nouvelle clé.
+            </Text>
+            <Group mt="xs">
+              <Button color="orange" loading={regenerating} onClick={() => void regenerate()}>
+                Confirmer la régénération
+              </Button>
+              <Button variant="default" onClick={() => setConfirming(false)}>
+                Annuler
+              </Button>
+            </Group>
+          </Alert>
+        )}
+      </Stack>
+    </Card>
+  );
+}
+
 export function ConfigPage(): JSX.Element {
   return (
     <Stack maw={640}>
@@ -595,6 +705,7 @@ export function ConfigPage(): JSX.Element {
       <DestinationsSection />
       <CredentialsSection />
       <ConnectionModeSection />
+      <LocalApiSection />
       <ApiParamsSection />
       <NotificationsSection />
     </Stack>

@@ -60,6 +60,8 @@ function install(): { calls: MockCall[] } {
           checkedAt: 0,
         },
       };
+    if (url.includes('/api/local-api-key/regenerate')) return { body: { key: 'NEW-KEY' } };
+    if (url.includes('/api/local-api-key')) return { body: { key: 'LOCAL-KEY' } };
     if (url.includes('/api/config')) return method === 'PUT' ? { body } : { body: CONFIG };
     return { body: {} };
   });
@@ -136,6 +138,24 @@ describe('ConfigPage', () => {
 
     // After the manual refresh, the freshly-fetched list appears.
     expect(await screen.findByLabelText('Promos')).toBeInTheDocument();
+  });
+
+  it('shows the local API key + base URL read-only and regenerates it (BL-013)', async () => {
+    const { calls } = install();
+    renderWithProviders(<ConfigPage />);
+
+    expect(await screen.findByDisplayValue('LOCAL-KEY')).toBeInTheDocument();
+    expect(screen.getByDisplayValue(/\/api\/v1$/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Régénérer la clé' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirmer la régénération' }));
+
+    await waitFor(() => {
+      expect(
+        calls.some((c) => c.method === 'POST' && c.url.includes('/api/local-api-key/regenerate')),
+      ).toBe(true);
+    });
+    expect(await screen.findByDisplayValue('NEW-KEY')).toBeInTheDocument();
   });
 
   it('credentials are write-only: sends them, clears the field, shows "configurés"', async () => {

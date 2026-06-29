@@ -18,6 +18,7 @@ import type {
   ErrorState,
   EventsResponse,
   HealthReport,
+  LocalApiKeyResponse,
   LogCategory,
   PriceHistoryResponse,
   PriceTrackingSettings,
@@ -128,6 +129,11 @@ export const api = {
 
   getErrorState: (): Promise<ErrorState> => getJson('/api/error-state'),
   sendHaWebhookTest: (): Promise<WebhookTestResult> => sendJson('POST', '/api/notify/test'),
+
+  // BL-013 — the auto-managed local API key (read-only display + rotation in the Config page).
+  getLocalApiKey: (): Promise<LocalApiKeyResponse> => getJson('/api/local-api-key'),
+  regenerateLocalApiKey: (): Promise<LocalApiKeyResponse> =>
+    sendJson('POST', '/api/local-api-key/regenerate'),
 
   // BL-012 — price tracking (internal mirror of the local `/api/v1/price-tracking/*` surface).
   getTrackedProducts: (): Promise<TrackedProductsResponse> => getJson('/api/price-tracking'),

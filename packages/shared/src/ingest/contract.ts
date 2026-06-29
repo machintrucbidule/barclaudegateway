@@ -10,7 +10,7 @@
 
 import type { ErrorCategory, Stock } from '../chronodrive/contract.js';
 
-/** Request body of `POST /v1/scan`. The raw barcode as emitted by the scanner. */
+/** Request body of `POST /api/v1/scan`. The raw barcode as emitted by the scanner. */
 export interface ScanRequest {
   ean: string;
 }
@@ -60,7 +60,7 @@ export interface ScanProductSummary {
   isEligible?: boolean;
 }
 
-/** Synchronous response of `POST /v1/scan`. ESPHome reads `status` first; the HTTP code is secondary. */
+/** Synchronous response of `POST /api/v1/scan`. ESPHome reads `status` first; the HTTP code is secondary. */
 export interface ScanResponse {
   status: ScanStatus;
   ean: string;

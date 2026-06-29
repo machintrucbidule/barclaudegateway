@@ -18,12 +18,14 @@ import type {
   DestinationsResponse,
   EnabledDestinations,
   EventsResponse,
+  LocalApiKeyResponse,
   LogCategory,
   ScansResponse,
 } from '@barclaudegateway/shared';
 import type { ChronodriveClient } from '../chronodrive/client.js';
 import type { AppConfig } from '../config/defaults.js';
-import { appConfigToEntries } from '../config/defaults.js';
+import { appConfigToEntries, CONFIG_KEYS } from '../config/defaults.js';
+import { generateLocalApiKey } from '../bootstrap.js';
 import type { TokenLifecycle } from '../auth/lifecycle.js';
 import { runHealthSelfTest } from '../health/selfTest.js';
 import { ChronodriveError } from './errors.js';
@@ -230,6 +232,30 @@ export const apiRoutes: FastifyPluginAsync<{ deps: ApiDeps }> = (app, opts) => {
       configStore: deps.configStore,
       emit: deps.emit,
     },
+  });
+
+  // BL-013: surface the auto-managed local-API key read-only (the Config page shows it for copy) + a
+  // regenerate action (rotation). The key is never in `GET/PUT /api/config` (DECISION-023); this is its
+  // only read route.
+  app.get('/local-api-key', async () => {
+    const response: LocalApiKeyResponse = {
+      key: deps.configStore.readAppConfig().localApiKey ?? '',
+    };
+    return response;
+  });
+
+  app.post('/local-api-key/regenerate', async () => {
+    const key = generateLocalApiKey();
+    deps.configStore.set(CONFIG_KEYS.localApiKey, key);
+    deps.emit({
+      category: 'other',
+      type: 'local_api_key_generated',
+      level: 'warn',
+      message: 'Local API key regenerated — existing clients must be reconfigured.',
+      detail: { localApiKey: key },
+    });
+    const response: LocalApiKeyResponse = { key };
+    return response;
   });
 
   const configPayload = (): ConfigResponse => ({

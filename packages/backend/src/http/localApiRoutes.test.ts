@@ -13,6 +13,7 @@ import { ChronodriveClient } from '../chronodrive/client.js';
 import { PriceTrackingStore } from '../storage/priceTracking.js';
 import { PriceScheduler } from '../price/priceScheduler.js';
 import { HaWebhookNotifier } from '../health/haWebhook.js';
+import type { IngestPipeline } from '../ingest/pipeline.js';
 import { localApiRoutes } from './localApiRoutes.js';
 
 const KEY = 'test-local-api-key';
@@ -47,10 +48,16 @@ function buildHarness(): Harness {
     emit,
   });
 
+  // The scan route (POST /api/v1/scan) is exercised in server.test.ts; these guard/stub tests never hit
+  // it, so a minimal pipeline stub satisfies the dep.
+  const pipeline = {
+    handle: async (ean: string) => ({ status: 'added', ean }),
+  } as unknown as IngestPipeline;
+
   const app = Fastify();
   void app.register(localApiRoutes, {
     prefix: '/api/v1',
-    deps: { configStore, emit, chronodrive, priceTracking, priceScheduler },
+    deps: { configStore, emit, chronodrive, priceTracking, priceScheduler, pipeline },
   });
   return { app, db, configStore, eventLog };
 }

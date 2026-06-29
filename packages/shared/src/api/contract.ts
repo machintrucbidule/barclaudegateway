@@ -166,3 +166,13 @@ export interface CheckNowResult {
   checked: number;
   alerts: number;
 }
+
+/**
+ * `GET /api/local-api-key` and `POST /api/local-api-key/regenerate` (BL-013): the auto-managed local-API
+ * key, surfaced read-only in the Config page so it can be copied into clients (the `X-API-Key` header).
+ * Regenerate rotates it (invalidating existing clients). The key stays out of `ApiConfig` and
+ * `GET/PUT /api/config` (DECISION-023) — this dedicated route is the only place it is returned.
+ */
+export interface LocalApiKeyResponse {
+  key: string;
+}

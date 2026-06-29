@@ -146,6 +146,24 @@ made, and start the container.
 - **Restart policy:** `unless-stopped` — the container comes back after a host reboot or a crash,
   unless you stopped it on purpose.
 
+## Local API (Layer B) integration
+
+The gateway exposes a local query API under **`/api/v1/*`** (products, nutrition, cart, lists,
+recipe-fill, price tracking) **and the scanner ingestion** (`POST /api/v1/scan`). Every `/api/v1/*` call
+is guarded by a single **`X-API-Key`** header.
+
+- **Get the key.** It is auto-generated on first boot. Read it (read-only) in the web UI at **Config →
+  API locale**, or from the boot log (`[BarclaudeGateway] Local API key generated. X-API-Key: …`). The
+  same page shows the base URL (`http://<host>:<port>/api/v1`) and a **Régénérer** button (rotation —
+  which invalidates existing clients).
+- **Use it.** Send `X-API-Key: <key>` on every `/api/v1/*` request, e.g.
+  `curl -H "X-API-Key: <key>" http://<host>:<port>/api/v1/ping`.
+- **Clients.** Paste the key into the ESPHome firmware (`local_api_key` substitution —
+  [`firmware/esphome/barclaude-scanner.yaml`](../firmware/esphome/barclaude-scanner.yaml)) and into the
+  macronome integration. The scanner's `POST /api/v1/scan` now requires the key (it moved from the old
+  keyless `/v1/scan`).
+- Full contract: [`specifications/api/local/contract.md`](../specifications/api/local/contract.md).
+
 ## Cutting a release
 
 Releases are built only by CI. To publish a new version:

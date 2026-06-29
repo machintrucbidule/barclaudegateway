@@ -58,11 +58,16 @@ export interface CreateServicesOptions {
  * client's `X-API-Key` header. The key is intentionally NOT redacted (that is its retrieval channel).
  * Idempotent: a present key is returned untouched and nothing is logged.
  */
+/** Generate a fresh local-API key (used at first boot and by the config-page "regenerate" action). */
+export function generateLocalApiKey(): string {
+  return randomBytes(24).toString('base64url');
+}
+
 export function ensureLocalApiKey(configStore: ConfigStore, emit: EmitEvent): string {
   const existing = configStore.get(CONFIG_KEYS.localApiKey);
   if (existing !== undefined && existing.length > 0) return existing;
 
-  const key = randomBytes(24).toString('base64url');
+  const key = generateLocalApiKey();
   configStore.set(CONFIG_KEYS.localApiKey, key);
   emit({
     category: 'other',

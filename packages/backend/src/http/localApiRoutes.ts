@@ -2,16 +2,17 @@
  * Local "Layer B" API (BL-008, DECISION-022/023), mounted under `/api/v1`.
  *
  * The personal API this gateway *exposes* so other devices/apps (notably the macronome integration) can
- * query Chronodrive through it — distinct from the internal UI API (`/api/*`, {@link apiRoutes}) and the
- * ESP ingestion endpoint (`POST /v1/scan`). Foundation (BATCH-7): a versioned prefix, an `X-API-Key`
- * guard, per-request `api_local` logging, and `GET /api/v1/ping`. Data endpoints: search + product sheet
- * (BATCH-8); cart read/write, lists CRUD, recipe-fill, budget+nutrition aggregate (BATCH-9). Price-tracking
- * arrives in BATCH-10. Each upstream call is journalled as a `chronodrive` event.
+ * query Chronodrive through it — distinct from the internal UI API (`/api/*`, {@link apiRoutes}).
+ * Foundation (BATCH-7): a versioned prefix, an `X-API-Key` guard, per-request `api_local` logging, and
+ * `GET /api/v1/ping`. Endpoints: search + product sheet (BATCH-8); cart read/write, lists CRUD,
+ * recipe-fill, budget+nutrition aggregate (BATCH-9); price-tracking CRUD (BATCH-10); and the **scanner
+ * ingestion** `POST /api/v1/scan` (BATCH-11/DECISION-028 — moved here from the keyless `/v1/scan`). Each
+ * upstream call is journalled as a `chronodrive` event.
  *
  * Security: a single shared key (auto-generated + backend-managed, see `bootstrap.ts`) is read fresh from
  * config on every request and compared in constant time to the `X-API-Key` header. Missing/wrong/empty →
  * HTTP 401. The guard is an `onRequest` hook **encapsulated to this plugin** (Fastify child context), so
- * `POST /v1/scan` and the UI `/api/*` routes are untouched.
+ * the UI `/api/*` routes are untouched.
  *
  * Observability (epic acceptance, DECISION-022): an `onResponse` hook journals every served request as an
  * `api_local` ("API interne") {@link LogEvent}, visible and filterable on the `/logs` page. The key and
@@ -35,6 +36,8 @@ import type {
   ProductSearchResponse,
   RecipeFillRequest,
   RecipeFillResult,
+  ScanResponse,
+  ScanStatus,
 } from '@barclaudegateway/shared';
 import { LOCAL_API_KEY_HEADER } from '@barclaudegateway/shared';
 import type { ConfigStore } from '../storage/config.js';
@@ -43,6 +46,7 @@ import type { LogEventType } from '@barclaudegateway/shared';
 import type { ChronodriveClient } from '../chronodrive/client.js';
 import { ChronodriveError, NotFoundError } from './errors.js';
 import { validateEan } from '../ingest/ean.js';
+import type { IngestPipeline } from '../ingest/pipeline.js';
 import { toNormalizedProduct, toProductSummary } from '../chronodrive/productMapper.js';
 import { aggregateCartNutrition, toNormalizedCart } from '../chronodrive/cartMapper.js';
 import type { PriceTrackingStore } from '../storage/priceTracking.js';
@@ -60,6 +64,20 @@ export interface LocalApiDeps {
   priceTracking: PriceTrackingStore;
   /** BL-012: the gated price scheduler (manual "check now" + settings apply). */
   priceScheduler: PriceScheduler;
+  /** BL-013: the scan→action pipeline behind `POST /api/v1/scan` (moved here from the keyless `/v1/scan`). */
+  pipeline: IngestPipeline;
+}
+
+/** Map a scan status to its HTTP code. Business outcomes are 200; only failures break out of 2xx. */
+function scanStatusToHttp(status: ScanStatus): number {
+  switch (status) {
+    case 'invalid_ean':
+      return 400;
+    case 'error':
+      return 502;
+    default:
+      return 200;
+  }
 }
 
 /** Send a clean 502 for a failed upstream Chronodrive call, journalling it as an `chronodrive` error. */
@@ -182,6 +200,25 @@ export const localApiRoutes: FastifyPluginAsync<{ deps: LocalApiDeps }> = (app, 
   app.get('/ping', async () => {
     const body: LocalApiStatus = { status: 'ok', version: 1 };
     return body;
+  });
+
+  // BL-013 (DECISION-028): the scanner ingestion, now a key-guarded local-API endpoint (was the keyless
+  // `POST /v1/scan`). The `ScanResponse` shape is unchanged — the firmware's LED mapping depends on it.
+  // Self-contained: validation + pipeline both return a parseable `ScanResponse`, never throwing.
+  app.post('/scan', async (request, reply) => {
+    const body = request.body as { ean?: unknown } | undefined;
+    const rawEan = typeof body?.ean === 'string' ? body.ean : '';
+    const validation = validateEan(body?.ean);
+    if (!validation.ok || validation.normalized === undefined) {
+      const response: ScanResponse = {
+        status: 'invalid_ean',
+        ean: rawEan,
+        message: validation.error,
+      };
+      return reply.code(400).send(response);
+    }
+    const response = await deps.pipeline.handle(validation.normalized);
+    return reply.code(scanStatusToHttp(response.status)).send(response);
   });
 
   // BL-012: price-tracking CRUD on the local API (key-guarded by the onRequest hook above), for

@@ -1,13 +1,13 @@
 # BarclaudeGateway — Project Context
 
 > **This file is read at the start of every development step.** Keep it up to date.
-> Last updated: 2026-06-28 (**BATCH-10 shipped — DECISION-026**: in-gateway **price tracking & HA alerts** +
-> a new **"Suivi des prix"** UI page. Tracked-products CRUD + thresholds + history + a gated opt-in scheduler
-> (re-arm alert, `price_drop` webhook) on both `/api/v1/price-tracking/*` (key-guarded) and the internal
-> `/api/price-tracking/*` (BL-012). The Layer-B **data** surface is now complete; only **BATCH-11**
-> (wiring/ops/YAML/docs/full tests) remains. **DECISION-027**: the whole Layer-B epic (BATCH-7..11) is ONE
-> user-triggered **0.3.0** release — no per-batch version bumps — and the exposed contracts are
-> stability-first (adapt the wiring, not the API). `contract.md` at **1.5.0**.)
+> Last updated: 2026-06-29 (**BATCH-11 shipped — DECISION-028**: the **scan moved onto the local API**
+> (`POST /api/v1/scan`, `X-API-Key`-guarded; the old keyless `/v1/scan` is removed → 404). Config page gains
+> an **"API locale"** card (read-only key + base URL + **Régénérer**); the ESPHome firmware was rebased on
+> Ivan's YAML with the scan URL/key change + two HA functions (product-info-on-scan, keyword search). **The
+> DECISION-022 Layer-B epic (BATCH-7..11) is COMPLETE; `BACKLOG.md` is empty.** **DECISION-027** still holds:
+> the whole epic is ONE user-triggered **0.3.0** release (no per-batch bumps); exposed contracts are
+> stability-first. `contract.md` (upstream Chronodrive) at **1.5.0**.)
 
 ---
 
@@ -164,7 +164,7 @@ notably **macronome** — can query Chronodrive through it (products, nutrition,
 
 - **Foundation shipped (BATCH-7, BL-008):** versioned prefix **`/api/v1`** on the same Fastify app; an
   **`X-API-Key`** guard (an encapsulated `onRequest` hook, constant-time compare, 401 on missing/wrong/
-  empty) that leaves `POST /v1/scan` and `/api/*` untouched; a `GET /api/v1/ping` health stub.
+  empty) that leaves the UI `/api/*` untouched; a `GET /api/v1/ping` health stub.
 - **Products & nutrition shipped (BATCH-8, BL-010, DECISION-024):** **`GET /api/v1/search?q=`** (lean
   `ProductSummary` page) and **`GET /api/v1/products/{eanOrId}`** (full `NormalizedProduct` with mapped
   `nutrition`, `weightKg`, `price`, absolute image URLs). EAN-vs-id is disambiguated with `validateEan`;
@@ -186,8 +186,17 @@ notably **macronome** — can query Chronodrive through it (products, nutrition,
   tables (`storage/priceTracking.ts`); a **gated opt-in `PriceScheduler`** (`price/priceScheduler.ts`,
   default off, `priceTrackingEnabled`/`priceTrackingIntervalHours` config, `unref()` timer) that reads
   prices, historises them, and fires `HaWebhookNotifier.notifyPriceDrop` (a secret-free `price_drop`
-  webhook) once per threshold crossing (per-product re-arm flag). **This completes the Layer-B data
-  surface** — only BATCH-11 (wiring/ops/YAML/docs/full tests) remains.
+  webhook) once per threshold crossing (per-product re-arm flag).
+- **Scan + wiring shipped (BATCH-11, BL-013, DECISION-028 — epic complete):** the **scanner ingestion moved
+  onto the local API** — **`POST /api/v1/scan`**, `X-API-Key`-guarded (the old keyless `/v1/scan` is removed
+  → 404); the `ScanResponse` shape is unchanged. The Config page gained an **"API locale"** card (read-only
+  key + base URL + a **Régénérer** button) backed by additive `GET /api/local-api-key` +
+  `POST /api/local-api-key/regenerate` (the key still never appears in `GET/PUT /api/config`). The ESPHome
+  firmware was **rebased on Ivan's actual YAML** (white-flush fix, GM861S config numbers) with the scan
+  URL/key change + two HA functions (**product info on scan** from `ScanResponse.product`; **keyword search**
+  via `GET /api/v1/search`) + `!secret` placeholders. lazy/keepalive preserved (endpoints log in on demand;
+  the only background task, the price scheduler, is opt-in/off by default). **The DECISION-022 Layer-B epic
+  (BATCH-7..11) is complete; the backlog is empty.**
 - **The local API key is auto-generated and app-managed** (DECISION-023, user's choice): generated on
   first boot when empty (`bootstrap.ensureLocalApiKey`), persisted as the `local_api_key` config row,
   surfaced **once** (a `local_api_key_generated` log event carrying the key + a stdout line) for retrieval.
@@ -204,8 +213,8 @@ notably **macronome** — can query Chronodrive through it (products, nutrition,
   hardware, BL-001, 2026-06-27).
 - ESPHome handles scanner, sends EAN code to middleware over local network
 - **Protocol: HTTP POST** (DECISION-001). Synchronous HTTP response carries the scan result so ESPHome drives the LED feedback (CLARIFY-04). Trade-off accepted: a scan during app downtime is lost (no queue).
-- **Physical feedback: LED-only** (DECISION-020 — the buzzer of CLARIFY-04 was dropped). White while the request is in flight, then the result colour ~1.5 s: green = `added`/`duplicate_ignored`, orange = `added_to_lists_only`/`partial`, red = `not_found`/`invalid_ean`/`error`/no-response. **Finalized in Phase 3 (DECISION-010):** endpoint `POST /v1/scan { ean }` → rich `ScanResponse` with `status` ∈ `added` / `added_to_lists_only` (+reason) / `duplicate_ignored` / `not_found` / `partial` / `error` (+category) / `invalid_ean`. Firmware-facing mapping (states → LED colour, request/response examples) in `docs/esphome-contract.md`; shared types in `@barclaudegateway/shared`.
-- **Home-Assistant-integrated** (DECISION-020): encrypted HA API + a manual-EAN input & "resend" button (same `POST /v1/scan` pipeline as a physical scan) + `last_ean`/`last_status` sensors. Reference firmware: `firmware/esphome/barclaude-scanner.yaml`.
+- **Physical feedback: LED-only** (DECISION-020 — the buzzer of CLARIFY-04 was dropped). White while the request is in flight, then the result colour ~1.5 s: green = `added`/`duplicate_ignored`, orange = `added_to_lists_only`/`partial`, red = `not_found`/`invalid_ean`/`error`/no-response. **Finalized in Phase 3 (DECISION-010):** endpoint `POST /api/v1/scan { ean }` (moved onto the key-guarded local API in BATCH-11/DECISION-028 — was `POST /v1/scan`) → rich `ScanResponse` with `status` ∈ `added` / `added_to_lists_only` (+reason) / `duplicate_ignored` / `not_found` / `partial` / `error` (+category) / `invalid_ean`. Firmware-facing mapping (states → LED colour, request/response examples) in `docs/esphome-contract.md`; shared types in `@barclaudegateway/shared`.
+- **Home-Assistant-integrated** (DECISION-020): encrypted HA API + a manual-EAN input & "resend" button (same `POST /api/v1/scan` pipeline as a physical scan) + `last_ean`/`last_status`/`last_product`/`last_price`/`search_result` sensors + a keyword-search text (BATCH-11). The scan + search carry the `X-API-Key`. Reference firmware: `firmware/esphome/barclaude-scanner.yaml`.
 
 ### Web UI
 
@@ -230,7 +239,7 @@ notably **macronome** — can query Chronodrive through it (products, nutrition,
 **Implemented in Phase 4 (DECISION-011/012/013):**
 
 - **Stack** — React 19 + Vite, **Mantine** components + **react-router** (`/config`, `/dashboard`, `/history`, `/logs`). Built bundle served by Fastify (`@fastify/static`, SPA history-fallback); in dev, Vite proxies `/api` and `/v1` to the backend.
-- **API surface** (`/api`, same Fastify app as `POST /v1/scan`): `GET/PUT /config`, `GET/PUT /config/destinations`, **`POST /config/destinations/refresh`** (BL-007 — force the live list fetch on demand), `PUT/DELETE /credentials`, `GET /scans` (status/search/page/pageSize — BL-004), `GET /scans/stream` (SSE), **`GET /events`** (category filter + pagination) + **`GET /events/stream`** (SSE — BL-003), `GET /health` + `POST /health/connect` (BL-006). Shapes typed in `@barclaudegateway/shared` (`ApiConfig`, `ConfigResponse`, `DestinationsResponse` — with `listsIdle` for the lazy cached-only state, BL-007 — `ScansResponse`, `ScanRecord`, `ScanEvent`, `LogEvent`, `EventsResponse`).
+- **API surface** (`/api`, same Fastify app as the local API + the scan `POST /api/v1/scan`): `GET/PUT /config`, `GET/PUT /config/destinations`, **`POST /config/destinations/refresh`** (BL-007 — force the live list fetch on demand), `PUT/DELETE /credentials`, `GET /scans` (status/search/page/pageSize — BL-004), `GET /scans/stream` (SSE), **`GET /events`** (category filter + pagination) + **`GET /events/stream`** (SSE — BL-003), `GET /health` + `POST /health/connect` (BL-006). Shapes typed in `@barclaudegateway/shared` (`ApiConfig`, `ConfigResponse`, `DestinationsResponse` — with `listsIdle` for the lazy cached-only state, BL-007 — `ScansResponse`, `ScanRecord`, `ScanEvent`, `LogEvent`, `EventsResponse`).
 - **Real-time** — **SSE** over in-process buses (DECISION-012). The scan `ScanEventBus` still feeds the Phase-5 error monitor; **the `/logs` page is now operational logs** over a dedicated `EventLogBus` + `event_log` table (auth exchanges + per-step scan detail + token refreshes + system events, live tail, Auth/Scan/Autre/Tous filter, errors shown clearly — **BL-003 shipped 2026-06-27**), and the old live table became a **static, searchable, paginated `Historique des scans`** (**BL-004 shipped 2026-06-27**). See DECISION-018.
 - **Credentials write-only** — `PUT /api/credentials` stores them encrypted; no GET ever returns the password, only `credentials.set`. The `x-api-key`s are not secret and are returned/edited.
 - **Config page edits all static params** including a **new optional `site_id`** store-id override (empty = dynamic `lastVisitedSite.id` detection). It is the editor of the single Phase 3 `enabled_destinations` row — no second source of truth.
@@ -293,7 +302,8 @@ All Phase 0 architecture decisions and functional clarifications are resolved. S
 | Products & nutrition on the local API (BATCH-8) | RESOLVED | `GET /api/v1/search` + `GET /api/v1/products/{eanOrId}` → normalized DTOs; Products `x-api-key`; §5.12.1 nutrition mapper + image-URL builder; EAN-vs-id via `validateEan` (DECISION-024, BL-010) |
 | Cart & lists on the local API (BATCH-9) | RESOLVED | `GET /cart` + `/cart/nutrition` aggregate, `POST/DELETE /cart/items`, `GET /lists` + `/lists/{id}`, `POST/DELETE /lists/{id}/items`, `POST /recipe-fill`; `ItemRef` id/ean/name + resolution report; batch cart write; cart mapper/aggregate (DECISION-025, BL-011) |
 | In-gateway price tracking + UI page (BATCH-10) | RESOLVED | tracked-products CRUD + thresholds + history + settings + check-now on both `/api/v1/price-tracking/*` (key) and internal `/api/price-tracking/*`; gated opt-in `PriceScheduler`, re-arm `price_drop` HA webhook, new "Suivi des prix" page (DECISION-026, BL-012) |
-| Release model + internal-contract stability | RESOLVED | The Layer-B epic (BATCH-7..11) is ONE user-triggered **0.3.0** release (no per-batch bumps); exposed contracts (Layer-B, UI `/api/*`, ESP `/v1/scan`) are stability-first — adapt the wiring on a Chronodrive change, modify/remove only when unavoidable + warn the user (DECISION-027) |
+| Release model + internal-contract stability | RESOLVED | The Layer-B epic (BATCH-7..11) is ONE user-triggered **0.3.0** release (no per-batch bumps); exposed contracts (Layer-B, UI `/api/*`, ESP `/api/v1/scan`) are stability-first — adapt the wiring on a Chronodrive change, modify/remove only when unavoidable + warn the user (DECISION-027) |
+| Wiring/ops + scan consolidation (BATCH-11) | RESOLVED | Scan moved to `POST /api/v1/scan` (key-guarded; old `/v1/scan` removed → 404; `ScanResponse` unchanged); Config "API locale" card (read-only key + base URL + Régénérer) via `GET/POST /api/local-api-key*`; firmware rebased on Ivan's YAML + 2 HA functions (product-info-on-scan, keyword search); lazy/keepalive verified (DECISION-028, BL-013) — **epic complete** |
 
 ---
 
@@ -403,4 +413,4 @@ The generated prompt must always be fully self-contained: it lists the files to 
 - Step 1 (`password/login`) sets the initial Reach5 session cookie that Step 2's `prompt=none` needs; a stateless client must forward Step 1's cookies into the Step 2 request.
 - **Scan behavior (CLARIFY-07/08, for Phase 3):** double-scan of the same EAN is debounced (~3 s window) then `+1`; out-of-stock (`NO_STOCK`) and ineligible (`isEligible: false`) products are added to the checked **lists only, never the cart**, with a distinct state returned for the ESPHome LED/buzzer.
 - **Phase 2 backend core is complete** (auth engine, token lifecycle, encrypted storage, typed Chronodrive client, read-only health self-test) — auth flow live-verified.
-- **Phase 3 ingestion is complete** (DECISION-009/010): Fastify server (`POST /v1/scan`, `GET /health`), EAN validation (length + GS1 check digit), debounce, scan→action pipeline (cart `+1` only when orderable; lists always; CLARIFY-01/08), bounded journaling, and the rich `ScanResponse` contract for ESPHome (`docs/esphome-contract.md`). Enabled destinations live in the SQLite `config` table under `enabled_destinations` (read side + minimal setter; full editor is Phase 4). Tested with mocked HTTP (`undici` `MockAgent`, `fastify.inject`).
+- **Phase 3 ingestion is complete** (DECISION-009/010; the scan endpoint moved to `POST /api/v1/scan` in BATCH-11/DECISION-028): Fastify server (`POST /api/v1/scan`, `GET /health`), EAN validation (length + GS1 check digit), debounce, scan→action pipeline (cart `+1` only when orderable; lists always; CLARIFY-01/08), bounded journaling, and the rich `ScanResponse` contract for ESPHome (`docs/esphome-contract.md`). Enabled destinations live in the SQLite `config` table under `enabled_destinations` (read side + minimal setter; full editor is Phase 4). Tested with mocked HTTP (`undici` `MockAgent`, `fastify.inject`).

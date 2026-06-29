@@ -4,8 +4,10 @@ Self-hosted middleware that bridges an **ESP32 barcode scanner** (ESPHome) with 
 private grocery e-commerce API. Scanning an empty product adds it to your Chronodrive cart and/or
 shopping lists. A local web UI handles configuration and monitoring.
 
-> ⚠️ **Status:** early development. This is the Phase 1 skeleton — no application features yet.
-> See [`specifications/ROADMAP.md`](specifications/ROADMAP.md) for the build plan.
+> **Status:** the scanner→cart/list bridge, the web UI, and the local **"Layer B" query API** (products,
+> nutrition, cart, lists, recipe-fill, price tracking) are built and tested. The Layer-B epic ships as a
+> single **0.3.0** release, cut when the maintainer decides. State:
+> [`specifications/PROJECT_CONTEXT.md`](specifications/PROJECT_CONTEXT.md).
 
 ## How it works (target architecture)
 
@@ -25,6 +27,20 @@ ESP32 + barcode scanner ──HTTP POST──▶ BarclaudeGateway ──▶ Chro
 Architecture decisions and rationale live in
 [`specifications/decisions.md`](specifications/decisions.md); the living architecture state is in
 [`specifications/PROJECT_CONTEXT.md`](specifications/PROJECT_CONTEXT.md).
+
+## Local API (Layer B)
+
+Beyond the scanner bridge, the gateway exposes a **local query API** under `/api/v1/*` so other
+devices/apps (notably a macronome integration) can search products, read nutrition, manage the cart and
+lists, fill from a recipe, and track prices through Chronodrive. It is guarded by a single **`X-API-Key`**
+(auto-generated; shown read-only in **Config → API locale**, regenerable there). The scanner ingestion is
+part of it too: `POST /api/v1/scan`. Full contract:
+[`specifications/api/local/contract.md`](specifications/api/local/contract.md). Firmware-facing scan
+contract: [`docs/esphome-contract.md`](docs/esphome-contract.md).
+
+> Stability policy (DECISION-027): the exposed contracts (Layer-B, the UI `/api/*`, the ESP scan) are
+> stability-first — upstream Chronodrive changes are absorbed in the gateway's wiring, not by changing the
+> exposed API; breaking changes only when unavoidable and after a clear heads-up.
 
 ## Repository layout
 

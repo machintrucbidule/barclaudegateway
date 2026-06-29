@@ -129,6 +129,20 @@ GET /api/v1/ping            →  200  { "status": "ok", "version": 1 }
 (no/!wrong key)             →  401  { "error": "...", "code": "unauthorized" }
 ```
 
+### §5.0b `POST /api/v1/scan` — scanner ingestion · `IMPLEMENTED` (BATCH-11)
+
+The ESP32/ESPHome scan path (BL-013/DECISION-028): it **moved here** from the old keyless `POST /v1/scan`
+(now 404) so it is a normal key-guarded local-API endpoint. Body `{ "ean": "<barcode>" }`; validates +
+normalises the EAN, runs the scan→cart/list pipeline, and answers synchronously with the **`ScanResponse`**
+(`@barclaudegateway/shared` — `status`/`reason`/`category`/`product`/`destinations`/`message`). The
+response **shape is unchanged** (the firmware's LED mapping depends on it — see
+`docs/esphome-contract.md`); only the URL + the `X-API-Key` requirement changed. HTTP code follows `status`
+(200 business outcomes, 400 `invalid_ean`, 502 upstream `error`). Missing/wrong key → `401`.
+
+```
+POST /api/v1/scan   { "ean": "3183280000933" }   →  200  { "status": "added", "ean": "…", "product": {…}, … }
+```
+
 ---
 
 ### §5.1 `GET /api/v1/search?q=` — product search · `IMPLEMENTED` (BATCH-8)

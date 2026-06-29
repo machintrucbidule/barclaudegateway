@@ -872,6 +872,23 @@ describe('api routes (fastify.inject)', () => {
     expect(ok.json()).toEqual({ products: [] });
   });
 
+  it('GET/POST /api/local-api-key reads then regenerates the managed key (BL-013)', async () => {
+    h.configStore.set(CONFIG_KEYS.localApiKey, 'ORIGINAL-KEY');
+
+    const read = await h.app.inject({ method: 'GET', url: '/api/local-api-key' });
+    expect(read.json()).toEqual({ key: 'ORIGINAL-KEY' });
+
+    const regen = await h.app.inject({ method: 'POST', url: '/api/local-api-key/regenerate' });
+    const newKey = regen.json().key as string;
+    expect(newKey).toBeTruthy();
+    expect(newKey).not.toBe('ORIGINAL-KEY');
+    // Persisted: a subsequent read returns the rotated key.
+    expect(h.configStore.readAppConfig().localApiKey).toBe(newKey);
+    expect((await h.app.inject({ method: 'GET', url: '/api/local-api-key' })).json()).toEqual({
+      key: newKey,
+    });
+  });
+
   it('PUT /api/config journals a config_change event (BL-003)', async () => {
     await h.app.inject({ method: 'PUT', url: '/api/config', payload: CONFIG });
     const events = h.eventLog.query({ page: 1, pageSize: 50 });
