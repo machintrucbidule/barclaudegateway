@@ -65,6 +65,13 @@ X-API-Key: <local-api-key>
 **LED-only** — the reference firmware lights the WS2812 **white while the request is in flight**, then
 holds the result colour for ~1.5 s.
 
+> **Single-owner LED (BL-014).** In the reference firmware **one** `mode: restart` script (`set_led`) is
+> the sole writer of the LED — both the in-flight white and the result colour go through it, always writing
+> the full R/G/B at once. Because `mode: restart` cancels the previous run (including any pending
+> turn-off), the **last call wins**, so back-to-back scans never blend channels (the earlier two-owner
+> code could overlap a white write with a result clear and show yellow/cyan). Do not drive the strip from
+> anywhere else.
+
 | `status`              | Meaning                                                       | LED    | HTTP |
 | --------------------- | ------------------------------------------------------------- | ------ | ---- |
 | _(in flight)_         | Request sent, awaiting the ScanResponse                       | White  | —    |

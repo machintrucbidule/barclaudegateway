@@ -55,10 +55,11 @@ substitutions:
 
   # --- Feedback hardware ---
   led_pin: 'GPIO20' # WS2812 data-in
+  led_brightness: '50%' # single source of truth for the WS2812 brightness (used by set_led)
 
   # --- Timing ---
   http_timeout: '8s'
-  feedback_ms: '1500ms' # how long the LED holds the result colour
+  feedback_ms: '1500' # how long the LED holds the result colour, in ms (passed as an int to set_led)
   white_flush_ms: '100ms' # let the light loop push WHITE to the LED before the blocking POST
 
   # ---------------------------------------------------------------------------
@@ -181,11 +182,13 @@ text:
             condition:
               lambda: 'return !x.empty();'
             then:
+              # BL-015: request only ONE result (&size=1). The default page of 20 (~8 KB) overruns the ESP
+              # http_request buffer and ArduinoJson reports IncompleteInput; we only ever show the first hit.
               - http_request.get:
                   url: !lambda |-
                     std::string enc;
                     for (char c : x) { if (c == ' ') enc += "%20"; else enc += c; }
-                    return std::string("http://${server_host}:${server_port}/api/v1/search?q=") + enc;
+                    return std::string("http://${server_host}:${server_port}/api/v1/search?q=") + enc + "&size=1";
                   capture_response: true
                   request_headers:
                     X-API-Key: '${local_api_key}'
@@ -438,21 +441,32 @@ script:
           id(scan_buf).clear();
           id(gm861_configuring) = false;
 
+  # BL-014: the SINGLE owner of status_led — every LED state (in-flight white AND result colour) goes
+  # through this one script. mode: restart means a new call cancels the previous sequence (incl. a pending
+  # turn-off), so the LAST call wins: no overlapping/partial-channel writes, no ghost turn-off, no
+  # yellow/cyan blend. Never call light.turn_on/off on status_led from anywhere else.
+  #   off_after_ms > 0  → hold the colour that long, then turn off (result feedback)
+  #   off_after_ms == 0 → turn on and stay on (in-flight white, cleared by the next result call)
   - id: set_led
     mode: restart
     parameters:
       r: int
       g: int
       b: int
+      off_after_ms: int
     then:
       - light.turn_on:
           id: status_led
           red: !lambda 'return r / 255.0f;'
           green: !lambda 'return g / 255.0f;'
           blue: !lambda 'return b / 255.0f;'
-          brightness: 50%
-      - delay: ${feedback_ms}
-      - light.turn_off: status_led
+          brightness: ${led_brightness}
+      - if:
+          condition:
+            lambda: 'return off_after_ms > 0;'
+          then:
+            - delay: !lambda 'return off_after_ms;'
+            - light.turn_off: status_led
 
   - id: send_scan
     mode: restart
@@ -460,16 +474,15 @@ script:
       ean: string
     then:
       - lambda: 'ESP_LOGD("scan", "send_scan START ean=%s", ean.c_str());'
-      # WHITE in-flight, then a flush delay long enough for the light loop to push
-      # it to the LED BEFORE the blocking POST freezes the loop. (10 ms was shorter
-      # than one loop cycle, so the LED never updated.)
-      - script.stop: set_led
-      - light.turn_on:
-          id: status_led
-          red: 100%
-          green: 100%
-          blue: 100%
-          brightness: 50%
+      # WHITE in-flight via the single LED owner (off_after_ms=0 → stays on until the result call), then a
+      # flush delay long enough for the light loop to push it to the LED BEFORE the blocking POST freezes
+      # the loop. (10 ms was shorter than one loop cycle, so the LED never updated.)
+      - script.execute:
+          id: set_led
+          r: 255
+          g: 255
+          b: 255
+          off_after_ms: 0
       - lambda: 'ESP_LOGD("scan", "LED -> white (in-flight) ean=%s", ean.c_str());'
       - delay: ${white_flush_ms}
       - lambda: 'id(awaiting_response) = true;'
@@ -509,11 +522,11 @@ script:
                   if (pprice >= 0.0f) { char pb[24]; snprintf(pb, sizeof(pb), "%.2f €", pprice); id(last_price).publish_state(pb); }
                   else { id(last_price).publish_state("—"); }
                   if (status == "added" || status == "duplicate_ignored") {
-                    id(set_led)->execute(0, 180, 0);
+                    id(set_led)->execute(0, 180, 0, ${feedback_ms});
                   } else if (status == "added_to_lists_only" || status == "partial") {
-                    id(set_led)->execute(255, 185, 10);
+                    id(set_led)->execute(255, 185, 10, ${feedback_ms});
                   } else {
-                    id(set_led)->execute(200, 0, 0);
+                    id(set_led)->execute(200, 0, 0, ${feedback_ms});
                   }
       - if:
           condition:
@@ -529,3 +542,4 @@ script:
                 r: 200
                 g: 0
                 b: 0
+                off_after_ms: ${feedback_ms}

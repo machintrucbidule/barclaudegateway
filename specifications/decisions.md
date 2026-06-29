@@ -575,6 +575,17 @@
   `docs/esphome-contract.md`); no middleware/app code change. The firmware is not part of the Docker
   image, so **no app version bump**.
 - **Shipped in**: BATCH-1 (loop prompt 2, 2026-06-27). Full entry in `BACKLOG_ARCHIVE.md`.
+- **Refinement (BATCH-12 / BL-014, 2026-06-29)**: the LED feedback above was intermittently showing the
+  wrong colour (yellow in-flight, cyan "ok") — a **software race**, not hardware. Two owners drove the
+  WS2812 (an inline white `light.turn_on` in `send_scan` plus the `set_led` result script), so a
+  `mode: restart` re-fire could overlap a white write with a result clear and blend channels. **Fix:** one
+  `mode: restart` script (`set_led(r, g, b, off_after_ms)`) is now the **sole LED owner** for every state
+  (white in-flight with `off_after_ms=0`, result colour with `off_after_ms=${feedback_ms}`); same id +
+  `mode: restart` means the **last call wins** (each call cancels the previous sequence incl. a pending
+  turn-off), with no partial-channel writes. A `led_brightness` substitution centralises brightness. This
+  **refines, does not reverse** DECISION-020 — the colour mapping and `ScanResponse` contract are
+  unchanged. **Firmware + docs only** (no app version bump). No optional local debounce (the GM861S reg
+  0x0013 same-barcode delay already covers double-reads). Full entry in `BACKLOG_ARCHIVE.md`.
 
 ---
 
@@ -878,6 +889,10 @@
 - **Scope**: process/policy — no code behaviour. Traced here, in the three exposed contracts (a
   "Stability & compatibility policy" note), in `PROJECT_CONTEXT.md`, and in the agent's persistent memory so
   it binds future contexts. Applies retroactively (the version revert) and to all future batches.
+- **Release cut (2026-06-29)**: the user triggered the release as **`0.3.1`** (tag `v0.3.1` → GHCR), not
+  `0.3.0` — bundling the whole Layer-B epic (BATCH-7..11) **plus BATCH-12** (BL-014/BL-015) into the first
+  published image of the epic. `0.3.0` was never tagged. This honours (A): one user-triggered cut, no
+  per-batch bumps; the version number at cut time was the user's call.
 
 ---
 

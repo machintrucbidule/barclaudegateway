@@ -1,13 +1,13 @@
 # BarclaudeGateway — Project Context
 
 > **This file is read at the start of every development step.** Keep it up to date.
-> Last updated: 2026-06-29 (**BATCH-11 shipped — DECISION-028**: the **scan moved onto the local API**
-> (`POST /api/v1/scan`, `X-API-Key`-guarded; the old keyless `/v1/scan` is removed → 404). Config page gains
-> an **"API locale"** card (read-only key + base URL + **Régénérer**); the ESPHome firmware was rebased on
-> Ivan's YAML with the scan URL/key change + two HA functions (product-info-on-scan, keyword search). **The
-> DECISION-022 Layer-B epic (BATCH-7..11) is COMPLETE; `BACKLOG.md` is empty.** **DECISION-027** still holds:
-> the whole epic is ONE user-triggered **0.3.0** release (no per-batch bumps); exposed contracts are
-> stability-first. `contract.md` (upstream Chronodrive) at **1.5.0**.)
+> Last updated: 2026-06-29 (**BATCH-12 shipped**: two scanner fixes. **BL-014** — the WS2812 wrong-colour
+> race is fixed by making `set_led` the **single LED owner** (`mode: restart`, parameterised for white
+> in-flight + result; last call wins) — a refinement of DECISION-020, firmware-only. **BL-015** — the HA
+> "Search" `IncompleteInput` is fixed by bounding the payload: `GET /api/v1/search` now takes `size`/`page`
+> (clamped; default 20 unchanged) and the firmware requests `&size=1`; local `contract.md` → **0.4.1**.
+> **The active `BACKLOG.md` is empty.** **DECISION-027** still holds: the Layer-B epic is ONE user-triggered
+> **0.3.0** release (still pending, independent of BATCH-12). Upstream `contract.md` (Chronodrive) at **1.5.0**.)
 
 ---
 
@@ -49,18 +49,22 @@ barclaudegateway/
 > workflow (`.github/workflows/release.yml`, tag-triggered) + a no-push PR build check
 > (`docker-build.yml`), the Portainer stack (`deploy/stack.yml`), and `docs/deployment.md`
 > (Phase 6, DECISION-015). Docker is still never built or tested on Windows — only CI builds it.
-> The version started at **0.0.1**; the **last published image is `0.2.2`**. The **whole Layer-B epic
-> (BATCH-7..11) is one in-development release, `0.3.0`, cut only when the user decides** — there are **no
-> per-batch version bumps** (DECISION-027; `package.json` holds `0.3.0` while the epic accumulates).
-> Under `0.3.0` so far: **BATCH-7** (BL-008 local "Layer B" API foundation — `/api/v1` prefix +
+> The version started at **0.0.1**. The **whole Layer-B epic (BATCH-7..11) was developed as one
+> in-development release with no per-batch bumps** (DECISION-027; `package.json` accumulated at `0.3.0`).
+> The user **cut that release on 2026-06-29 as `0.3.1`** (tag `v0.3.1` → GHCR), bundling the epic **plus
+> BATCH-12** (BL-014 LED race fix + BL-015 search payload) — so **`0.3.1` is the first published image of
+> the epic** (the prior published image was `0.2.2`; `0.3.0` was never tagged). Under that release:
+> **BATCH-7** (BL-008 local "Layer B" API foundation — `/api/v1` prefix +
 > app-managed `X-API-Key` guard + `GET /api/v1/ping` stub + `api/local/contract.md`; BL-009 logging split
 > API Chronodrive vs API interne; DECISION-023); **BATCH-8** (BL-010 products & nutrition —
 > `GET /api/v1/search?q=` + `GET /api/v1/products/{eanOrId}`, Products `x-api-key`, §5.12.1 mapper;
 > DECISION-024); **BATCH-9** (BL-011 cart & lists — `GET /cart` + `/cart/nutrition`, `POST/DELETE
 > /cart/items`, lists CRUD, `POST /recipe-fill`, `ItemRef` id/ean/name; DECISION-025); **BATCH-10** (BL-012
 > in-gateway price tracking & HA alerts + the "Suivi des prix" page, on both `/api/v1/price-tracking/*` and
-> internal `/api/price-tracking/*`; DECISION-026). Still to come under `0.3.0`: **BATCH-11** (wiring/ops/
-> YAML/docs/tests). Earlier published versions: `0.2.2` shipped
+> internal `/api/price-tracking/*`; DECISION-026); **BATCH-11** (BL-013 wiring/ops/YAML/docs/tests, scan
+> moved onto `POST /api/v1/scan`; DECISION-028 — epic complete); and **BATCH-12** (BL-014 single-owner LED
+> race fix + BL-015 bounded search payload, local `contract.md` → 0.4.1). Earlier published versions:
+> `0.2.2` shipped
 > **BATCH-6** (BL-007: lazy mode no longer force-fetches the shopping lists
 > on the config page; cached display + manual `POST /api/config/destinations/refresh`, refines
 > DECISION-021). `0.2.1` shipped **BATCH-5**
@@ -213,8 +217,8 @@ notably **macronome** — can query Chronodrive through it (products, nutrition,
   hardware, BL-001, 2026-06-27).
 - ESPHome handles scanner, sends EAN code to middleware over local network
 - **Protocol: HTTP POST** (DECISION-001). Synchronous HTTP response carries the scan result so ESPHome drives the LED feedback (CLARIFY-04). Trade-off accepted: a scan during app downtime is lost (no queue).
-- **Physical feedback: LED-only** (DECISION-020 — the buzzer of CLARIFY-04 was dropped). White while the request is in flight, then the result colour ~1.5 s: green = `added`/`duplicate_ignored`, orange = `added_to_lists_only`/`partial`, red = `not_found`/`invalid_ean`/`error`/no-response. **Finalized in Phase 3 (DECISION-010):** endpoint `POST /api/v1/scan { ean }` (moved onto the key-guarded local API in BATCH-11/DECISION-028 — was `POST /v1/scan`) → rich `ScanResponse` with `status` ∈ `added` / `added_to_lists_only` (+reason) / `duplicate_ignored` / `not_found` / `partial` / `error` (+category) / `invalid_ean`. Firmware-facing mapping (states → LED colour, request/response examples) in `docs/esphome-contract.md`; shared types in `@barclaudegateway/shared`.
-- **Home-Assistant-integrated** (DECISION-020): encrypted HA API + a manual-EAN input & "resend" button (same `POST /api/v1/scan` pipeline as a physical scan) + `last_ean`/`last_status`/`last_product`/`last_price`/`search_result` sensors + a keyword-search text (BATCH-11). The scan + search carry the `X-API-Key`. Reference firmware: `firmware/esphome/barclaude-scanner.yaml`.
+- **Physical feedback: LED-only** (DECISION-020 — the buzzer of CLARIFY-04 was dropped). White while the request is in flight, then the result colour ~1.5 s: green = `added`/`duplicate_ignored`, orange = `added_to_lists_only`/`partial`, red = `not_found`/`invalid_ean`/`error`/no-response. **Finalized in Phase 3 (DECISION-010):** endpoint `POST /api/v1/scan { ean }` (moved onto the key-guarded local API in BATCH-11/DECISION-028 — was `POST /v1/scan`) → rich `ScanResponse` with `status` ∈ `added` / `added_to_lists_only` (+reason) / `duplicate_ignored` / `not_found` / `partial` / `error` (+category) / `invalid_ean`. Firmware-facing mapping (states → LED colour, request/response examples) in `docs/esphome-contract.md`; shared types in `@barclaudegateway/shared`. **BATCH-12/BL-014 (refines DECISION-020):** a **single** `mode: restart` script (`set_led`) is now the sole LED owner (white in-flight + result colour, full R/G/B, last call wins) — fixes the wrong-colour (yellow/cyan) race from overlapping writes; `led_brightness` substitution centralises brightness.
+- **Home-Assistant-integrated** (DECISION-020): encrypted HA API + a manual-EAN input & "resend" button (same `POST /api/v1/scan` pipeline as a physical scan) + `last_ean`/`last_status`/`last_product`/`last_price`/`search_result` sensors + a keyword-search text (BATCH-11). The scan + search carry the `X-API-Key`. **BATCH-12/BL-015:** the keyword search requests `&size=1` and the local `GET /api/v1/search` accepts `size`/`page` (clamped; default 20) so the constrained ESP `http_request` parses the body (no `IncompleteInput`). Reference firmware: `firmware/esphome/barclaude-scanner.yaml`.
 
 ### Web UI
 

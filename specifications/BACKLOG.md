@@ -9,10 +9,11 @@
 > [ops/grooming](./prompts/loop-3-ops-grooming.md). Schema and process: [`ROADMAP.md`](./ROADMAP.md) §
 > "Iterative maintenance loop".
 >
-> Last updated: 2026-06-29 (**BATCH-11 shipped** — BL-013 wiring/ops/firmware/docs, DECISION-028; moved to
-> `BACKLOG_ARCHIVE.md`. **The DECISION-022 Layer-B epic (BATCH-7..11) is complete and the backlog is now
-> empty.** The maintenance loop is idle — run **loop prompt 1** to add new remarks, or cut the **0.3.0**
-> release (DECISION-027 — one user-triggered release for the whole epic).)
+> Last updated: 2026-06-29 (**BATCH-12 shipped** — BL-014 single-owner LED race fix + BL-015 bounded
+> search payload; moved to `BACKLOG_ARCHIVE.md`. **The active backlog is now empty.** The DECISION-022
+> Layer-B epic (BATCH-7..11) is complete; the **0.3.0** release (DECISION-027) is still pending — run
+> [loop prompt 1](./prompts/loop-1-intake-triage.md) to add remarks, or
+> [loop prompt 3](./prompts/loop-3-ops-grooming.md) to re-verify.)
 
 ---
 
@@ -35,15 +36,13 @@
 
 ---
 
-## (empty)
+## No active batches
 
-No active backlog items. The **DECISION-022 Local Chronodrive query API ("Layer B") epic** (BATCH-7..11)
-is complete — see [`BACKLOG_ARCHIVE.md`](./BACKLOG_ARCHIVE.md). The maintenance loop is idle.
+The active backlog is **empty** — every triaged item has shipped (latest: **BATCH-12**, BL-014 + BL-015,
+2026-06-29; see [`BACKLOG_ARCHIVE.md`](./BACKLOG_ARCHIVE.md)).
 
-Next steps available:
-
-- **Add remarks** → run [loop prompt 1 (intake/triage)](./prompts/loop-1-intake-triage.md) to capture and
-  batch new items here.
-- **Release** → the whole epic is one user-triggered **0.3.0** (DECISION-027): push the `vX.Y.Z` tag
-  (DECISION-005) to build + publish the GHCR image.
-- **Re-verify** → run [loop prompt 3 (ops/grooming)](./prompts/loop-3-ops-grooming.md) periodically.
+> The **DECISION-022 Local Chronodrive query API ("Layer B") epic** (BATCH-7..11) is complete — see
+> [`BACKLOG_ARCHIVE.md`](./BACKLOG_ARCHIVE.md). The **0.3.0** release (DECISION-027 — one user-triggered
+> release for the whole epic) is still pending and is independent of BATCH-12. Run
+> [loop prompt 1](./prompts/loop-1-intake-triage.md) to add remarks, or
+> [loop prompt 3](./prompts/loop-3-ops-grooming.md) to re-verify.
