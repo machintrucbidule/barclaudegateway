@@ -1,8 +1,8 @@
 # BarclaudeGateway Local API ("Layer B") — Contract Specification
 
-**Document version:** 0.4.0
+**Document version:** 0.4.1
 **Spec status:** Draft (foundation + products/search + cart/lists/recipe + price-tracking shipped — epic data surface complete)
-**Last updated:** 2026-06-28 (BATCH-10 / BL-012 — price tracking & HA alerts + a UI page, DECISION-026)
+**Last updated:** 2026-06-29 (BATCH-12 / BL-015 — §5.1 `size`/`page` query params bound the search payload)
 **Maintainer:** Ivan Calmels
 
 ---
@@ -152,6 +152,14 @@ returns full product objects; the local API projects each to a lean **`ProductSu
 `weightKg`, `price`, `stock`/`isEligible`, one `image` URL) — fetch §5.2 for nutrition. Empty `q` →
 `400 bad_request`. Requires the upstream **Products** `x-api-key`.
 
+**Query parameters** (BL-015):
+
+| Param  | Type | Default | Range  | Notes                                                                                  |
+| ------ | ---- | ------- | ------ | -------------------------------------------------------------------------------------- |
+| `q`    | str  | —       | —      | **Required.** Keyword or EAN. Empty/blank → `400 bad_request`.                          |
+| `size` | int  | `20`    | `1..50` | Page size. Bounds the payload — very constrained clients (the ESP32 scanner) pass `size=1` so the body stays small enough to parse. Out-of-range values are clamped; non-numeric → default. |
+| `page` | int  | `1`     | `>=1`   | 1-based page number. Non-numeric/`<1` → `1`.                                           |
+
 ```
 GET /api/v1/search?q=mozzarella
 → 200 {
@@ -266,6 +274,7 @@ Exposed on **both** surfaces: `/api/v1/price-tracking/*` (key-guarded, here) **a
 
 | Version | Date       | Summary                                                                                     |
 | ------- | ---------- | ------------------------------------------------------------------------------------------- |
+| 0.4.1   | 2026-06-29 | Search payload bound (BATCH-12 / BL-015): **§5.1** gains optional `size` (1..50, default 20) + `page` (>=1, default 1) query params. Additive + backward-compatible — the no-param default still returns 20 (DECISION-027). |
 | 0.4.0   | 2026-06-28 | Price tracking (BATCH-10 / BL-012): **§5.10 `IMPLEMENTED`** — tracked-products CRUD + thresholds + history + settings + check-now on both `/api/v1/price-tracking/*` (key-guarded) and the internal `/api/price-tracking/*` (UI page); a gated opt-in scheduler + a `price_drop` HA webhook. |
 | 0.3.0   | 2026-06-28 | Cart & lists (BATCH-9 / BL-011): **§5.3–§5.9 `IMPLEMENTED`** — `GET /cart` + `GET /cart/nutrition` (budget+macros aggregate), `POST/DELETE /cart/items`, `GET /lists` + `/lists/{id}`, `POST/DELETE /lists/{id}/items`, `POST /recipe-fill`. New `ItemRef` write model (id/ean/name) with a per-item resolution report. |
 | 0.2.0   | 2026-06-28 | Products & nutrition (BATCH-8 / BL-010): **§5.1 `GET /search`** and **§5.2 `GET /products/{eanOrId}`** now `IMPLEMENTED` — `ProductSummary` / `NormalizedProduct` + `ProductNutrition` (essential §5.12.1 set), EAN-vs-id disambiguation, absolute image URLs; requires the upstream Products `x-api-key`. |

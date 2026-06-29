@@ -6,9 +6,81 @@
 >
 > Newest entries on top. Nothing here is active work — the active backlog is [`BACKLOG.md`](./BACKLOG.md).
 >
-> Last updated: 2026-06-29 (BATCH-11 — BL-013 wiring/ops/firmware/docs, DECISION-028. **The DECISION-022
-> Layer-B epic (BATCH-7..11) is complete.** NB: DECISION-027 — the whole epic is ONE user-triggered
-> **0.3.0** release; no per-batch version bumps.)
+> Last updated: 2026-06-29 (BATCH-12 — BL-014 single-owner LED race fix + BL-015 bounded search payload;
+> firmware + a small additive backend/contract change. NB: DECISION-027 — the pending 0.3.0 release is
+> independent of BATCH-12; firmware is not in the Docker image.)
+
+---
+
+## BATCH-12 — Scanner / firmware fixes (P2) — shipped 2026-06-29
+
+> Developed via loop prompt 2. Two independent scanner defects found in everyday use after the BATCH-11
+> firmware rebase, grouped so the firmware is built and **re-flashed once**. BL-014 is firmware-only;
+> BL-015 is firmware + a small additive backend tweak (no breaking change — DECISION-027). Neither blocks
+> the pending user-triggered 0.3.0 release.
+
+### [BL-014] Fix intermittent wrong LED colours caused by concurrent LED writes (firmware)
+
+- Type: Bug · Priority: P2 · Batch: BATCH-12 · Source: user remark (2026-06-29)
+- **Date shipped**: 2026-06-29
+- **Description (root cause)**: the WS2812 intermittently showed the wrong colour — yellow instead of white
+  in-flight, cyan/blue instead of green "ok". A **software race**, not hardware: two owners drove the LED
+  — `send_scan` wrote white inline (`light.turn_on`) AND the `set_led` script wrote the result colour then
+  auto-off. `send_scan` is `mode: restart`, fired from several sources, so writes/clears overlapped and
+  channels blended (white−blue = yellow; green + leftover blue = cyan).
+- **What was actually done** (`firmware/esphome/barclaude-scanner.yaml`):
+  - Made **`set_led` the sole LED writer**, parameterised for every state. It now takes
+    `off_after_ms: int`: `light.turn_on` full R/G/B at `brightness: ${led_brightness}` instantly, then
+    `if off_after_ms > 0` → `delay <off_after_ms>` + `light.turn_off`. `mode: restart` means a new call
+    cancels the previous sequence (incl. a pending turn-off) → **last call wins**, no overlap, no ghost
+    turn-off. Every write sets the full R/G/B (no partial-channel writes).
+  - **Removed the second LED owner** in `send_scan`: deleted the `script.stop: set_led` + the inline white
+    `light.turn_on` block; the in-flight white is now `set_led(255,255,255, 0)` (stays on until the result
+    call). Kept the one `${white_flush_ms}` yield so the strip flushes white before the blocking POST.
+  - Result calls (and the no-response branch) pass `${feedback_ms}` as the 4th arg: green
+    `set_led(0,180,0, ${feedback_ms})`, orange `(255,185,10, …)`, red `(200,0,0, …)`.
+  - Added a **`led_brightness`** substitution (default `'50%'`) — single source of truth for LED brightness
+    (was hard-coded `brightness: 50%` in two places). `feedback_ms` is now a plain int of ms (`'1500'`),
+    consumed by `set_led`'s int param.
+  - **No** optional local debounce (user's choice): the GM861S reg 0x0013 same-barcode delay already covers
+    double-reads; the single-owner refactor alone removes the artefacts.
+  - Docs: `docs/esphome-contract.md` gained a "Single-owner LED (BL-014)" note. A **refinement of
+    DECISION-020** (no new decision number).
+- **Acceptance criteria — met (pending on-hardware confirmation by the user after flashing)**: repeated
+  back-to-back scans show white in-flight then the correct mapped colour (green/orange/red) with no
+  yellow/cyan; the result holds `feedback_ms` then turns off; manual-EAN + resend paths show the correct
+  colour; no regression in the scan→cart/list outcome. (Firmware is not unit-tested; validation is the
+  DECISION-020-style hardware check.)
+
+### [BL-015] Fix the ESP "Search" field: bound the search payload so the result parses
+
+- Type: Bug · Priority: P2 · Batch: BATCH-12 · Source: user remark (2026-06-29)
+- **Date shipped**: 2026-06-29
+- **Description (root cause)**: typing a keyword in the HA "Search" field returned "aucun résultat" though
+  the backend answered correctly. `GET /api/v1/search` returned the default page of 20 `ProductSummary`
+  items (~8 KB); the ESP `http_request` could not capture/parse a body that large → ArduinoJson
+  `IncompleteInput`. The firmware only ever displays the first result, so it was requesting ~20× more than
+  it needed.
+- **What was actually done**:
+  - **Backend** (`packages/backend/src/http/localApiRoutes.ts`, `GET /search`): reads optional `size`
+    (clamped 1..50, default **20** unchanged for other callers) and `page` (≥1, default 1) query params via
+    a new `clampInt` helper + `SEARCH_SIZE_MAX = 50`, and passes them to the existing
+    `deps.chronodrive.searchProducts(term, page, size)`. Response shape/journalling/mapping unchanged.
+  - **Firmware** (`barclaude-scanner.yaml`, `search_query`): the URL is now
+    `…/api/v1/search?q=<enc>&size=1` so the body is ~1 result and parses reliably (avoids the ESP buffer
+    limit entirely). First-result extraction lambda unchanged.
+  - **Contract** (`api/local/contract.md` §5.1): documented `size` + `page` (a params table); bumped the
+    doc to **0.4.1** with a §6 version-history row (additive, backward-compatible — DECISION-027).
+- **Acceptance criteria — met**: `GET /api/v1/search?q=…&size=1` returns a single summary; the default (no
+  `size`) still returns 20 for other callers; a backend test covers the `size`/`page` clamping; §5.1
+  documents the params. (HA-side "Search result" populating + no `IncompleteInput` in ESP logs is the
+  user's on-hardware confirmation after flashing.)
+- **Tests** (all green: **226** backend, 5 new in `localApiRoutes.test.ts`): `/search` forwards
+  `size=1` → `searchProducts('carottes',1,1)`; no params → `(…,1,20)`; `size=999&page=3` → clamped
+  `(…,3,50)`; non-numeric → defaults; empty `q` → `400` and upstream not called. Lint/typecheck/format green.
+
+- **Commit/PR**: branch `fix/batch-12-scanner-firmware` → `main` (loop prompt 2, 2026-06-29); shipped in
+  the **`0.3.1`** release (tag `v0.3.1` → GHCR — the epic's first published image, DECISION-027).
 
 ---
 

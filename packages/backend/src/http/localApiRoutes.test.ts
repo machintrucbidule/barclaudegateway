@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 import { CONFIG_KEYS } from '../config/defaults.js';
@@ -23,6 +23,7 @@ interface Harness {
   db: Database;
   configStore: ConfigStore;
   eventLog: EventLog;
+  chronodrive: ChronodriveClient;
 }
 
 function buildHarness(): Harness {
@@ -59,7 +60,7 @@ function buildHarness(): Harness {
     prefix: '/api/v1',
     deps: { configStore, emit, chronodrive, priceTracking, priceScheduler, pipeline },
   });
-  return { app, db, configStore, eventLog };
+  return { app, db, configStore, eventLog, chronodrive };
 }
 
 describe('localApiRoutes (Layer B, BL-008)', () => {
@@ -131,5 +132,79 @@ describe('localApiRoutes (Layer B, BL-008)', () => {
     });
     expect(res.statusCode).toBe(404);
     expect(res.json().code).toBe('not_found');
+  });
+
+  // BL-015 — GET /search bounds the upstream payload via `size` (1..50, default 20) + `page` (>=1, default 1).
+  describe('GET /search size/page (BL-015)', () => {
+    const emptyPage = {
+      page: {
+        size: 1,
+        totalElements: 0,
+        totalPages: 0,
+        number: 1,
+        hasNext: false,
+        hasPrevious: false,
+        isEmpty: true,
+      },
+      content: [],
+    };
+
+    function spySearch() {
+      return vi.spyOn(h.chronodrive, 'searchProducts').mockResolvedValue(emptyPage);
+    }
+
+    it('forwards size=1 to the upstream client (the constrained-scanner path)', async () => {
+      const spy = spySearch();
+      const res = await h.app.inject({
+        method: 'GET',
+        url: '/api/v1/search?q=carottes&size=1',
+        headers: { 'x-api-key': KEY },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(spy).toHaveBeenCalledWith('carottes', 1, 1);
+    });
+
+    it('defaults to size 20 / page 1 when neither is given (other callers unchanged)', async () => {
+      const spy = spySearch();
+      await h.app.inject({
+        method: 'GET',
+        url: '/api/v1/search?q=carottes',
+        headers: { 'x-api-key': KEY },
+      });
+      expect(spy).toHaveBeenCalledWith('carottes', 1, 20);
+    });
+
+    it('clamps an oversized size to 50 and forwards an explicit page', async () => {
+      const spy = spySearch();
+      await h.app.inject({
+        method: 'GET',
+        url: '/api/v1/search?q=carottes&size=999&page=3',
+        headers: { 'x-api-key': KEY },
+      });
+      expect(spy).toHaveBeenCalledWith('carottes', 3, 50);
+    });
+
+    it('falls back to defaults for non-numeric size/page', async () => {
+      const spy = spySearch();
+      await h.app.inject({
+        method: 'GET',
+        url: '/api/v1/search?q=carottes&size=abc&page=-2',
+        headers: { 'x-api-key': KEY },
+      });
+      // size=abc → default 20; page=-2 → clamped to the min (1).
+      expect(spy).toHaveBeenCalledWith('carottes', 1, 20);
+    });
+
+    it('rejects an empty q with 400 bad_request and never calls upstream', async () => {
+      const spy = spySearch();
+      const res = await h.app.inject({
+        method: 'GET',
+        url: '/api/v1/search?q=%20&size=1',
+        headers: { 'x-api-key': KEY },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().code).toBe('bad_request');
+      expect(spy).not.toHaveBeenCalled();
+    });
   });
 });

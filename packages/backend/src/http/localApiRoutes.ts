@@ -151,6 +151,15 @@ function notFound(reply: FastifyReply, error: string): FastifyReply {
   return reply.code(404).send(body);
 }
 
+/** BL-015: cap on the `/search` page size — bounds the upstream payload so constrained clients can parse it. */
+const SEARCH_SIZE_MAX = 50;
+
+/** Parse a positive integer query param, clamped to `[min, max]`, falling back to `fallback` when absent/invalid. */
+function clampInt(raw: unknown, fallback: number, min: number, max: number): number {
+  const parsed = typeof raw === 'string' ? Number.parseInt(raw, 10) : NaN;
+  return Number.isFinite(parsed) ? Math.min(Math.max(parsed, min), max) : fallback;
+}
+
 /** Constant-time compare of the stored key against the provided header value. Empty/absent key = locked. */
 function keyMatches(stored: string | undefined, provided: unknown): boolean {
   if (
@@ -235,15 +244,20 @@ export const localApiRoutes: FastifyPluginAsync<{ deps: LocalApiDeps }> = (app, 
   });
 
   // BL-010 — product search. Returns a page of lean summaries (fetch the sheet for nutrition).
+  // BL-015: optional `size` (1..50, default 20) + `page` (>=1, default 1) bound the payload — very
+  // constrained clients (the ESP32 scanner) request `size=1` so the body is tiny enough to parse.
   app.get('/search', async (request, reply) => {
-    const q = (request.query as { q?: unknown } | undefined)?.q;
+    const query = request.query as { q?: unknown; size?: unknown; page?: unknown } | undefined;
+    const q = query?.q;
     if (typeof q !== 'string' || q.trim().length === 0) {
       const body: LocalApiError = { error: 'query parameter q is required', code: 'bad_request' };
       return reply.code(400).send(body);
     }
     const term = q.trim();
+    const size = clampInt(query?.size, 20, 1, SEARCH_SIZE_MAX);
+    const page = clampInt(query?.page, 1, 1, Number.MAX_SAFE_INTEGER);
     try {
-      const res = await deps.chronodrive.searchProducts(term);
+      const res = await deps.chronodrive.searchProducts(term, page, size);
       deps.emit({
         category: 'chronodrive',
         type: 'product_search',
